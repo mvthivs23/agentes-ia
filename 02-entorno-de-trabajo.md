@@ -4,6 +4,8 @@
 >
 > Capítulo 02 · *Agentes de IA con Python: guía práctica para diseñar, construir y desplegar sistemas agénticos*
 
+> **Preparación rápida:** si solo quieres dejar el entorno listo, sigue el [paso a paso rápido para preparar el entorno](02-entorno-paso-a-paso-rapido.md).
+
 ---
 
 ## Introducción
