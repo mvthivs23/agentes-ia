@@ -1,302 +1,209 @@
-# 02 · Tu entorno de trabajo desde cero
+# Preparar el entorno de trabajo (paso a paso detallado)
 
-> *Python, editor, terminal y claves de API*
->
-> Capítulo 02 · *Agentes de IA con Python: guía práctica para diseñar, construir y desplegar sistemas agénticos*
+Guía para dejar listo un entorno de Python con acceso a modelos de lenguaje. Sirve tanto para usar el SDK de un proveedor (Anthropic, OpenAI, Google) como para usar **OpenRouter**, que da acceso a modelos de varios proveedores con una sola clave y tiene opciones gratuitas.
 
-> **Preparación rápida:** si solo quieres dejar el entorno listo, sigue el [paso a paso rápido para preparar el entorno](02-entorno-paso-a-paso-rapido.md).
+Para una versión corta, consulta [entorno-rapido.md](entorno-rapido.md).
 
 ---
 
-## Introducción
+## Índice
 
-Antes de que un agente de IA pueda ejecutar una herramienta, llamar a una API o mantener memoria entre conversaciones, necesita un entorno local fiable:
-
-- un intérprete de Python,
-- un editor que lo reconozca,
-- una terminal manejable,
-- claves de API guardadas de forma que el código pueda leerlas sin incrustarlas en archivos visibles.
-
-Este capítulo no enseña programación en sentido amplio (eso lo aborda el capítulo 3). Enseña la instalación y las convenciones necesarias para que los ejemplos corran sin fricción.
-
----
-
-## Python como intérprete, no como aplicación
-
-Python no es una aplicación de escritorio con icono, doble clic y ventana. Es un **intérprete**: un ejecutable que recibe un archivo de texto con instrucciones y las ejecuta línea por línea.
-
-VS Code, en cambio, es un editor de texto sofisticado. No incluye Python ni lo necesita para funcionar. La conexión entre ambos la aporta la **extensión oficial de Python** para VS Code, que se comunica con el intérprete instalado para ejecutar código, mostrar errores en línea y activar el autocompletado.
-
-### Consecuencias prácticas
-
-- Si instalas VS Code antes que Python, la extensión no encontrará ningún intérprete.
-- Si instalas Python pero la extensión apunta al intérprete equivocado, los paquetes instalados con `pip` no estarán disponibles al ejecutar el código.
-- Cuando hay varios Pythons en el sistema (algo frecuente en macOS, donde Apple instala el suyo propio con fines internos), el editor puede conectarse al incorrecto sin avisar de forma clara.
-
-### El PATH
-
-No hace falta memorizar rutas de archivo. Basta con entender el **PATH**: la lista ordenada de directorios donde el sistema operativo busca ejecutables cuando escribes un comando en la terminal.
-
-Al escribir `python3` y presionar Enter, el sistema recorre esa lista de izquierda a derecha hasta encontrar un archivo llamado `python3`. El primero que encuentra es el que ejecuta.
-
-- En macOS, si Python está instalado en `/usr/local/bin/`, ese directorio debe aparecer en el PATH antes que `/usr/bin/`, donde reside el Python del sistema.
-- En Windows, conviene marcar la opción que agrega Python al PATH durante la instalación.
-
-Para ver tu PATH actual:
-
-```bash
-echo $PATH        # macOS / Linux
-```
-
-```powershell
-$env:Path         # PowerShell
-```
-
-No es necesario interpretar toda la salida: basta con confirmar que la ruta donde instalaste Python aparece antes que cualquier otra instalación.
+1. [Requisitos](#1-requisitos)
+2. [Elegir tu ruta: proveedor directo u OpenRouter](#2-elegir-tu-ruta-proveedor-directo-u-openrouter)
+3. [Verificar Python](#3-verificar-python)
+4. [Crear la carpeta del proyecto](#4-crear-la-carpeta-del-proyecto)
+5. [Crear el entorno virtual](#5-crear-el-entorno-virtual)
+6. [Activar el entorno](#6-activar-el-entorno)
+7. [Instalar las dependencias](#7-instalar-las-dependencias)
+8. [Crear `.gitignore`](#8-crear-gitignore)
+9. [Obtener la clave de API](#9-obtener-la-clave-de-api)
+10. [Crear el archivo `.env`](#10-crear-el-archivo-env)
+11. [Verificar las claves](#11-verificar-las-claves)
+12. [Primer mensaje al modelo](#12-primer-mensaje-al-modelo)
+13. [Guardar las dependencias](#13-guardar-las-dependencias)
+14. [Conectar VS Code](#14-conectar-vs-code)
+15. [Solución de problemas](#15-solución-de-problemas)
+16. [Antes de subir a GitHub](#16-antes-de-subir-a-github)
 
 ---
 
-## Instalar Python: macOS y Windows por separado
+## 1. Requisitos
 
-macOS y Windows tienen flujos de instalación distintos; mezclarlos suele producir errores difíciles de diagnosticar.
+- **Python 3.10 o superior.**
+- **VS Code** con la extensión oficial de Python (publicada por Microsoft).
+- **Una clave de API**: de un proveedor directo o de OpenRouter.
+- Una terminal: Terminal o iTerm en macOS, PowerShell o Símbolo del sistema en Windows, cualquier shell en Linux.
 
-### macOS
+Por qué importan estas piezas:
 
-El punto de partida es **python.org/downloads**. El instalador oficial coloca los ejecutables en `/usr/local/bin/` y crea los enlaces simbólicos `python3` y `pip3`.
+- **Python** es el intérprete que ejecuta tu código. VS Code no lo incluye; la extensión solo se comunica con el Python que tengas instalado.
+- **La clave de API** identifica tu cuenta. Cada llamada puede tener costo, así que trátala como una contraseña.
 
-El Python que Apple incluye o expone en macOS (accesible como `/usr/bin/python3` en muchas instalaciones) existe para uso interno del sistema. Las aplicaciones de terceros no deben depender de él ni modificarlo. Por eso los comandos de macOS usan `python3`, nunca `python` a secas, que en macOS moderno frecuentemente no existe o apunta a una versión heredada.
+---
 
-Verifica:
+## 2. Elegir tu ruta: proveedor directo u OpenRouter
 
-```bash
-python3 --version
-```
+| | **Ruta A: proveedor directo** | **Ruta B: OpenRouter** |
+|---|---|---|
+| Qué instalas | SDK del proveedor (`anthropic`, `openai` o `google-genai`) | `openai` apuntando a OpenRouter, o `requests` |
+| Clave | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` o `GOOGLE_API_KEY` | `OPENROUTER_API_KEY` |
+| Costo | Pago por uso | Hay modelos gratuitos (sufijo `:free`) |
+| Modelos | Solo los de ese proveedor | Muchos proveedores con la misma API |
+| Cuándo elegirla | Producción, funciones exclusivas del proveedor, datos sensibles | Aprender, experimentar, comparar modelos sin pagar |
 
-La salida debe mostrar la versión que acabas de instalar, por ejemplo `Python 3.12.4`. Si muestra una versión anterior a 3.10, el PATH todavía apunta al Python del sistema. Revisa el orden de directorios y, si es necesario, edita el archivo de configuración de tu shell (`~/.zshrc` en Zsh, la shell por defecto en macOS desde Catalina) para colocar `/usr/local/bin` al principio.
+Puedes seguir ambas rutas en el mismo proyecto. Los pasos 1 a 8 son iguales; cambian solo las dependencias, la clave y el código del primer mensaje.
 
-### Windows
+---
 
-Python no forma parte del sistema operativo. Si escribes `python` en una terminal recién instalada, Windows puede abrir la Microsoft Store o reportar que el comando no existe.
+## 3. Verificar Python
 
-La documentación oficial recomienda obtenerlo desde **python.org/downloads** o desde la Microsoft Store; ambas rutas son válidas. El instalador de python.org incluye además el **Python Launcher for Windows**, que instala el comando `py` y permite seleccionar versión explícitamente:
-
-```powershell
-py -3.12 --version
-```
-
-Si solo tienes una versión instalada, `py` y `python` son equivalentes.
-
-Durante la instalación, **activa "Add Python to PATH"**. Sin esa opción, tendrás que escribir la ruta completa al ejecutable cada vez, lo que hace inviable el trabajo diario.
-
-Verifica la instalación con:
-
-```powershell
-py --version
-```
-
-o, si elegiste la ruta de Microsoft Store:
-
-```powershell
-python --version
-```
-
-### Verificar pip
-
-`pip` es el gestor de paquetes. Conviene invocarlo **como módulo del intérprete** en lugar de llamar al ejecutable `pip` directamente. Así se garantiza que el gestor de paquetes pertenece al mismo Python que ejecutará el código. Este hábito evita una categoría entera de errores confusos.
+Comprueba que tienes Python 3.10 o superior.
 
 ```bash
-python3 -m pip --version    # macOS
-py -m pip --version         # Windows
+python3 --version      # macOS / Linux
+py --version           # Windows
+```
+
+Si la versión es menor a 3.10, instala una más reciente desde **python.org/downloads**.
+
+**macOS:** usa siempre `python3`. El comando `python` a secas puede no existir o apuntar a una versión antigua.
+
+**Windows:** durante la instalación, activa **Add Python to PATH**. Si no lo hiciste, vuelve a ejecutar el instalador y márcala.
+
+---
+
+## 4. Crear la carpeta del proyecto
+
+```bash
+mkdir -p ~/Documentos/agentes-ia
+cd ~/Documentos/agentes-ia
+```
+
+Trabaja siempre desde esta carpeta. Todos los comandos siguientes se ejecutan aquí.
+
+---
+
+## 5. Crear el entorno virtual
+
+Un entorno virtual es una carpeta dentro del proyecto con su propio Python y sus propias librerías. Así, las versiones que instales para un proyecto no afectan a otro.
+
+```bash
+python3 -m venv .venv        # macOS / Linux
+py -m venv .venv             # Windows
+```
+
+El nombre `.venv` es el convencional. El punto inicial marca que es una carpeta auxiliar.
+
+---
+
+## 6. Activar el entorno
+
+Hazlo cada vez que abras una terminal nueva dentro del proyecto.
+
+```bash
+source .venv/bin/activate              # macOS / Linux
+.venv\Scripts\Activate.ps1             # Windows (PowerShell)
+.venv\Scripts\activate.bat             # Windows (Símbolo del sistema)
+```
+
+Debe aparecer `(.venv)` al inicio del prompt. Para salir, escribe `deactivate`.
+
+Verifica que `pip` pertenece al entorno:
+
+```bash
+python -m pip --version
+```
+
+La ruta que muestra debe contener `.venv`.
+
+---
+
+## 7. Instalar las dependencias
+
+Elige según tu ruta.
+
+**Ruta A: proveedor directo** (instala solo el SDK que vayas a usar):
+
+```bash
+python -m pip install anthropic python-dotenv       # Anthropic (Claude)
+python -m pip install openai python-dotenv          # OpenAI (GPT)
+python -m pip install google-genai python-dotenv    # Google (Gemini)
+```
+
+**Ruta B: OpenRouter** (con SDK de OpenAI, o sin SDK):
+
+```bash
+python -m pip install openai python-dotenv          # recomendado
+python -m pip install requests python-dotenv        # alternativa sin SDK
+```
+
+Puedes instalar varias si quieres comparar las dos formas.
+
+---
+
+## 8. Crear `.gitignore`
+
+El archivo `.gitignore` indica a Git qué no debe subir al repositorio. Como mínimo, excluye el entorno y las claves.
+
+```bash
+printf ".venv/\n.env\n" > .gitignore
+cat .gitignore
+```
+
+Debe mostrar:
+
+```
+.venv/
+.env
 ```
 
 ---
 
-## El entorno virtual: dependencias sin contaminación cruzada
+## 9. Obtener la clave de API
 
-Cada proyecto de agentes —el agente de investigación del capítulo 23, el agente de automatización personal del capítulo 24, el asistente con MCP del capítulo 25— necesitará paquetes y versiones concretas. Si los instalas directamente en el Python del sistema, tarde o temprano dos proyectos pedirán versiones incompatibles de la misma librería. **Los entornos virtuales evitan esa contaminación cruzada.**
+**Ruta A: proveedor directo**
 
-Un entorno virtual es una carpeta dentro del proyecto que contiene su propio Python y sus propios paquetes, aislados del resto del sistema. Técnicamente, `venv` crea un directorio con un archivo `pyvenv.cfg`, un subdirectorio `bin/` en macOS/Linux o `Scripts/` en Windows con copias o enlaces simbólicos al intérprete, y una carpeta `site-packages/` donde se instalan los paquetes. Cualquier `pip install` ejecutado con ese entorno activo deposita los archivos ahí, no en el Python global.
+| Proveedor | Dónde obtenerla | Variable |
+|---|---|---|
+| Anthropic | console.anthropic.com → API Keys | `ANTHROPIC_API_KEY` |
+| OpenAI | platform.openai.com → API keys | `OPENAI_API_KEY` |
+| Google | Google AI Studio → Get API key | `GOOGLE_API_KEY` |
 
-### Crear el entorno
+**Ruta B: OpenRouter**
 
-Sitúate en la carpeta raíz de tu proyecto y ejecuta:
+1. Entra a [openrouter.ai](https://openrouter.ai) y crea una cuenta.
+2. Ve a **Keys** y crea una clave. Empieza por `sk-or-v1-`.
+3. Si quieres usar modelos gratuitos, revísalos en [openrouter.ai/models](https://openrouter.ai/models) filtrando por **Free**. Su identificador termina en `:free`.
 
-```bash
-# macOS / Linux
-python3 -m venv .venv
-```
-
-```powershell
-# Windows
-py -m venv .venv
-```
-
-El punto al inicio del nombre (`.venv`) indica que es una carpeta auxiliar, no código de la aplicación. VS Code la reconoce automáticamente. Puedes llamarla `venv`, pero `.venv` es lo que usan la mayoría de las herramientas modernas y lo que verás en los ejemplos.
-
-### Excluirla de Git
-
-La carpeta `.venv` no debe subirse a Git. Agrégala a `.gitignore` antes de tu primer commit:
-
-```bash
-echo ".venv/" >> .gitignore
-```
-
-La razón es práctica: `.venv` puede superar los cien megabytes según los paquetes instalados, contiene binarios específicos del sistema operativo y puede regenerarse en cualquier momento con `pip install -r requirements.txt`. Subirla a un repositorio equivale a subir artefactos compilados: es innecesario, pesado y propenso a conflictos.
-
-### Activar el entorno
-
-Para activar el entorno —paso que debes hacer cada vez que abres una nueva terminal antes de trabajar en el proyecto—:
-
-```bash
-# macOS / Linux
-source .venv/bin/activate
-```
-
-```powershell
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Windows (Command Prompt)
-.venv\Scripts\activate.bat
-```
-
-Cuando el entorno está activo, el prompt de la terminal muestra `(.venv)` al principio. Cualquier `python` o `pip` que uses a partir de ese momento apunta al entorno, no al sistema. Para desactivarlo, escribe `deactivate`.
-
-### Mantener `requirements.txt`
-
-Mantener un `requirements.txt` actualizado simplifica el trabajo a largo plazo. Después de instalar un paquete nuevo:
-
-```bash
-python -m pip freeze > requirements.txt
-```
-
-Este archivo lista los paquetes instalados con sus versiones exactas. Cuando compartes el proyecto o lo clonas en otra máquina, basta con crear un entorno nuevo e instalar desde ese archivo:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-> **Nota:** `freeze` reemplaza el contenido completo del archivo, así que siempre refleja lo instalado en ese momento. Si instalas un paquete antes de generar el archivo, aparecerá; si ejecutas el `freeze` antes de instalar nada, quedará vacío. Vuelve a ejecutarlo cada vez que cambies las dependencias.
+> Los paneles suelen mostrar la clave completa **solo al crearla**. Cópiala en ese momento.
 
 ---
 
-## VS Code: el editor que necesita saber dónde está Python
+## 10. Crear el archivo `.env`
 
-VS Code será el editor de referencia porque integra bien Python, tiene soporte nativo para Jupyter notebooks (útiles en el capítulo 20) y ofrece una terminal integrada.
+Crea un archivo llamado exactamente `.env` en la raíz del proyecto. Sin comillas y sin espacios alrededor del `=`.
 
-1. Descárgalo desde **code.visualstudio.com**.
-2. Instala la extensión oficial **Python** (publicada por Microsoft) desde el panel de extensiones.
-
-### Seleccionar el intérprete
-
-Después debes indicarle qué intérprete usar. Con el proyecto abierto:
-
-1. Presiona `Ctrl+Shift+P` (o `Cmd+Shift+P` en Mac).
-2. Escribe y selecciona **Python: Select Interpreter**.
-3. Elige la ruta del entorno virtual:
-   - macOS/Linux: `.venv/bin/python`
-   - Windows: `.venv\Scripts\python.exe`
-
-La extensión listará todos los Pythons que detecta, incluido el del entorno virtual si ya lo creaste.
-
-Desde ese momento, el botón de ejecutar, el depurador, el linter y el autocompletado usarán ese intérprete. Si seleccionas el Python global, el autocompletado no encontrará los paquetes instalados en `.venv` y aparecerán errores de importación ajenos al código.
-
-### La terminal integrada
-
-Se abre con `` Ctrl+` `` (el acento grave). En la primera apertura permite elegir el perfil de shell:
-
-- **Windows:** PowerShell, Command Prompt, Git Bash o WSL.
-- **macOS:** Zsh o Bash.
-
-Cuando detecta `.venv` en el directorio del proyecto, VS Code puede activar automáticamente el entorno virtual: el prompt aparece con `(.venv)` sin intervención manual. Así se evita el error habitual de instalar paquetes con el entorno desactivado y luego ver fallar `import anthropic`.
-
-Si la activación automática no ocurre, verifica en `settings.json` que esté habilitada la opción:
-
-```json
-"python.terminal.activateEnvironment": true
-```
-
-Por defecto está en `true`, aunque algunas instalaciones corporativas pueden desactivarla por política.
-
----
-
-## Variables de entorno y claves de API
-
-### Por qué variables de entorno
-
-Los agentes se comunican con APIs externas:
-
-- **Anthropic** para Claude,
-- **OpenAI** para sus modelos,
-- **Google** para Gemini.
-
-Cada una requiere una clave de autenticación obtenida en su portal de desarrollador. Esas claves son **credenciales privadas**: quien las tenga puede hacer llamadas a la API **a tu costa**.
-
-El mecanismo correcto para que el código acceda a ellas sin incrustarlas en archivos de código son las **variables de entorno**. Una variable de entorno es un par nombre-valor que el sistema operativo pone a disposición de los procesos que corren en él. Cuando Python ejecuta:
-
-```python
-import os
-os.environ["ANTHROPIC_API_KEY"]
-```
-
-no lee ningún archivo de código: pregunta al sistema operativo por el valor de esa variable.
-
-### El archivo `.env`
-
-Para el desarrollo local, la forma más práctica de definir variables de entorno por proyecto es un archivo llamado **`.env`** en la raíz del proyecto:
+**Ruta A:**
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
-OPENAI_API_KEY=sk-xxxxxxxxxxxxx
-GOOGLE_API_KEY=AIzaxxxxxxxxxxxxx
 ```
 
-- El ejemplo usa tres proveedores. Si solo vas a trabajar con Claude, basta con la línea de Anthropic.
-- No uses comillas ni espacios alrededor del `=`.
+**Ruta B:**
 
-> **Este archivo jamás debe subirse a Git.** Agrégalo a `.gitignore`:
->
-> ```gitignore
-> .venv/
-> .env
-> ```
-
-### Cargar `.env` desde Python
-
-Para que Python pueda leer ese archivo y cargar las variables, instala la librería `python-dotenv`:
-
-```bash
-python -m pip install python-dotenv
+```env
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxx
 ```
 
-Y al inicio de cualquier script que necesite las claves:
+Puedes tener varias claves en el mismo `.env`, una por línea.
 
-```python
-from dotenv import load_dotenv
-load_dotenv()
-```
+> **Nunca subas `.env` a GitHub.** Si una clave se expone, revócala en el panel del proveedor y genera otra.
 
-A partir de ahí, `os.environ["ANTHROPIC_API_KEY"]` devuelve el valor correcto. Los SDK de Anthropic, OpenAI y Google buscan automáticamente sus variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` y `GOOGLE_API_KEY`; el SDK de Google también acepta `GEMINI_API_KEY`). Por eso muchos scripts ni siquiera necesitan leer la variable explícitamente: basta con ejecutar `load_dotenv()` antes de instanciar el cliente.
+---
 
-### Obtener las claves
+## 11. Verificar las claves
 
-- **Anthropic:** crea una cuenta en `console.anthropic.com`, ve a **API Keys** y genera una nueva clave. El nombre que le das es solo para tu organización interna.
-- **OpenAI:** en `platform.openai.com`, sección **API keys**.
-- **Google (Gemini):** en `aistudio.google.com`, sección **Get API Key**.
-
-> Las tres plataformas muestran la clave completa **solo en el momento de crearla**. Cópiala de inmediato al archivo `.env`. Normalmente no hay forma de recuperarla después; hay que generar una nueva.
-
-### Seguridad: una clave expuesta es una clave comprometida
-
-La seguridad de las claves descansa en un principio simple: **una clave expuesta es una clave comprometida**, sin importar por cuánto tiempo ni en qué contexto. Si pegas una clave en un mensaje de chat, en un issue de GitHub, en una captura de pantalla o en un archivo que luego haces commit y push, esa clave debe considerarse pública.
-
-GitHub tiene un sistema de *secret scanning* que detecta claves conocidas en commits públicos y notifica automáticamente al proveedor para que las invalide.
-
-**La reacción correcta no es eliminar el commit** (que puede estar ya en el historial de otros clones), sino **revocar la clave comprometida** en el portal del proveedor y generar una nueva.
-
-### Verificar que las claves están disponibles
-
-Antes de trabajar con cualquier API, verifica que las tres claves están disponibles. Este script **no las imprime**; solo confirma su presencia. Guárdalo como `verificar_claves.py`:
+Crea `verificar_claves.py`. Este script solo confirma que la variable existe; no imprime el valor.
 
 ```python
 import os
@@ -304,7 +211,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-claves = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]
+claves = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"]
 for clave in claves:
     valor = os.environ.get(clave, "")
     estado = "OK" if valor else "FALTA"
@@ -315,32 +222,184 @@ for clave in claves:
 python verificar_claves.py
 ```
 
-La salida esperada son tres líneas con `OK`. Si alguna dice `FALTA`, el SDK correspondiente fallará con un error de autenticación al primer intento de llamada, no con un error de importación.
+Salida esperada: la línea de la clave que usas debe decir `OK`. Las demás pueden decir `FALTA` sin problema.
 
 ---
 
-## Lista de verificación antes de continuar
+## 12. Primer mensaje al modelo
 
-Antes de avanzar al capítulo 3, confirma estos puntos:
+El mismo prompt para ambas rutas:
 
-- [ ] `python3 --version` (macOS) o `py --version` (Windows) muestra **3.10 o superior**
-- [ ] `python -m pip --version` muestra pip asociado al intérprete correcto
-- [ ] La carpeta `.venv` existe en el directorio del proyecto
-- [ ] `(.venv)` aparece en el prompt al abrir la terminal integrada de VS Code
-- [ ] VS Code muestra el intérprete de `.venv` en la barra inferior
-- [ ] `.env` existe con las claves necesarias y aparece en `.gitignore`
-- [ ] `verificar_claves.py` reporta `OK` para las claves que vas a usar
+> *Explica en tres frases qué hace un agente de IA cuando usa una herramienta.*
 
-Si algún punto falla, el síntoma más común no será un error explícito de configuración, sino un `ModuleNotFoundError` o un `AuthenticationError` que pueden parecer errores de código. **Resolver la configuración antes de avanzar evita diagnósticos innecesarios en los capítulos siguientes.**
+### Ruta A: Anthropic
 
-Con el entorno operativo, el capítulo 3 puede centrarse en el subconjunto de Python necesario para construir agentes.
+Crea `primer_mensaje.py`:
+
+```python
+from anthropic import Anthropic
+
+cliente = Anthropic()  # lee ANTHROPIC_API_KEY del entorno
+
+respuesta = cliente.messages.create(
+    model="claude-sonnet-5",   # confirma el nombre vigente en la documentación
+    max_tokens=256,            # obligatorio en Anthropic
+    messages=[{
+        "role": "user",
+        "content": "Explica en tres frases qué hace un agente de IA cuando usa una herramienta.",
+    }],
+)
+
+print(respuesta.content[0].text)
+print(f"Entrada: {respuesta.usage.input_tokens} / Salida: {respuesta.usage.output_tokens}")
+```
+
+### Ruta A: OpenAI
+
+```python
+from openai import OpenAI
+
+cliente = OpenAI()  # lee OPENAI_API_KEY del entorno
+
+respuesta = cliente.responses.create(
+    model="gpt-5.6-terra",     # confirma el nombre vigente
+    input="Explica en tres frases qué hace un agente de IA cuando usa una herramienta.",
+)
+
+print(respuesta.output_text)
+print(f"Entrada: {respuesta.usage.input_tokens} / Salida: {respuesta.usage.output_tokens}")
+```
+
+### Ruta B: OpenRouter (SDK de OpenAI)
+
+Crea `primer_mensaje.py`:
+
+```python
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+
+load_dotenv()
+
+MODELO = "recursive/flint-v1.0:free"   # identificador exacto de openrouter.ai/models
+
+cliente = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+)
+
+respuesta = cliente.chat.completions.create(
+    model=MODELO,
+    messages=[{
+        "role": "user",
+        "content": "Explica en tres frases qué hace un agente de IA cuando usa una herramienta.",
+    }],
+    max_tokens=256,
+)
+
+print(respuesta.choices[0].message.content)
+print(f"Entrada: {respuesta.usage.prompt_tokens} / Salida: {respuesta.usage.completion_tokens}")
+```
+
+### Ruta B: OpenRouter (HTTP directo, sin SDK)
+
+```python
+import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+respuesta = requests.post(
+    "https://openrouter.ai/api/v1/chat/completions",
+    headers={
+        "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+        "Content-Type": "application/json",
+    },
+    json={
+        "model": "recursive/flint-v1.0:free",
+        "messages": [{
+            "role": "user",
+            "content": "Explica en tres frases qué hace un agente de IA cuando usa una herramienta.",
+        }],
+        "max_tokens": 256,
+    },
+    timeout=60,
+)
+
+if respuesta.status_code != 200:
+    raise SystemExit(f"Error {respuesta.status_code}: {respuesta.text}")
+
+datos = respuesta.json()
+print(datos["choices"][0]["message"]["content"])
+print(f"Entrada: {datos['usage']['prompt_tokens']} / Salida: {datos['usage']['completion_tokens']}")
+```
+
+Ejecuta cualquiera con:
+
+```bash
+python primer_mensaje.py
+```
+
+### Cambiar de modelo
+
+En OpenRouter, cambia solo la variable `MODELO`. Usa siempre el identificador exacto que aparece en la página del modelo. En el proveedor directo, cambia el parámetro `model` por uno vigente de ese proveedor.
 
 ---
 
-## Material del capítulo
+## 13. Guardar las dependencias
 
-El código canónico de este capítulo, completo y organizado por archivo, está en el repositorio del libro:
+Registra las librerías instaladas con sus versiones:
 
-**https://github.com/studio35post/agentes-ia-python**
+```bash
+python -m pip freeze > requirements.txt
+```
 
-El Anexo A explica cómo descargarlo paso a paso y el Anexo B resuelve los errores comunes.
+Para replicar el entorno en otra máquina:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Vuelve a generar el archivo cada vez que instales o desinstales una librería.
+
+---
+
+## 14. Conectar VS Code
+
+1. Abre la carpeta `agentes-ia` en VS Code.
+2. Instala la extensión **Python** (Microsoft) si no la tienes.
+3. Presiona `Ctrl+Shift+P` (o `Cmd+Shift+P` en Mac) y elige **Python: Select Interpreter**.
+4. Selecciona:
+   - macOS / Linux: `.venv/bin/python`
+   - Windows: `.venv\Scripts\python.exe`
+5. Abre una terminal integrada con `` Ctrl+` ``. Si VS Code activa el entorno solo, verás `(.venv)`.
+
+Si VS Code no activa el entorno, revisa en la configuración que esté habilitado `python.terminal.activateEnvironment`.
+
+---
+
+## 15. Solución de problemas
+
+| Síntoma | Causa probable | Solución |
+|---|---|---|
+| `python3 --version` muestra menos de 3.10 | El PATH apunta a un Python antiguo | Instala una versión nueva y revisa el orden del PATH |
+| `ModuleNotFoundError: No module named 'openai'` | Se instaló en otro Python o el entorno no está activo | Activa `.venv` e instala de nuevo |
+| `FALTA` en `verificar_claves.py` | `.env` no está en la carpeta desde la que ejecutas, o el nombre de la variable está mal escrito | Revisa la ubicación y el nombre exacto |
+| 401 / `AuthenticationError` | La clave es incorrecta o no se cargó | Confirma que `load_dotenv()` se ejecuta antes de leer la clave; genera una nueva si hace falta |
+| 404 / modelo no encontrado | Identificador mal escrito o modelo retirado | Copia el ID exacto desde la página del modelo |
+| 429 / `RateLimitError` | Cuota agotada, común en modelos gratuitos | Espera o cambia de modelo |
+| Respuesta cortada | `max_tokens` demasiado bajo | Revisa `finish_reason` (OpenRouter) o `stop_reason` (Anthropic) y súbelo si corresponde |
+| VS Code no encuentra los paquetes | Intérprete equivocado | Vuelve a seleccionar `.venv` en *Select Interpreter* |
+
+---
+
+## 16. Antes de subir a GitHub
+
+```bash
+git status
+```
+
+No deben aparecer `.env` ni `.venv/`. Si aparecen, revisa `.gitignore` antes de hacer commit.
+
+Si ya subiste una clave por error, revócala en el panel del proveedor. Borrar el archivo en un commit posterior no la invalida, porque queda en el historial.
