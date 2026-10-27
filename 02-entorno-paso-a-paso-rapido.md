@@ -1,12 +1,12 @@
 # Preparar el entorno: paso a paso rápido
 
-> Versión corta del Capítulo 02, pensada para dejar el entorno listo en unos minutos. Para entender el porqué de cada paso, consulta [02-entorno-de-trabajo.md](02-entorno-de-trabajo.md).
+Versión corta para dejar el entorno listo en unos minutos. Para entender el porqué de cada paso, consulta [entorno-detallado.md](entorno-detallado.md).
 
-**Requisitos:** Python 3.10 o superior, VS Code con la extensión oficial de Python y una clave de API de Anthropic.
+**Requisitos:** Python 3.10 o superior, VS Code con la extensión oficial de Python y una clave de API de un proveedor (Anthropic, OpenAI, Google) **o** de [OpenRouter](https://openrouter.ai).
 
 ---
 
-## 1. Crear la carpeta del proyecto
+## 1. Crear la carpeta y entrar
 
 ```bash
 mkdir -p ~/Documentos/agentes-ia
@@ -22,59 +22,48 @@ py --version           # Windows
 
 Debe mostrar **3.10 o superior**.
 
-## 3. Crear el entorno virtual
+## 3. Crear y activar el entorno virtual
 
 ```bash
-python3 -m venv .venv  # macOS / Linux
-py -m venv .venv       # Windows
-```
-
-## 4. Activar el entorno
-
-Hazlo cada vez que abras una terminal nueva dentro del proyecto.
-
-```bash
+python3 -m venv .venv                  # macOS / Linux (Windows: py -m venv .venv)
 source .venv/bin/activate              # macOS / Linux
 .venv\Scripts\Activate.ps1             # Windows (PowerShell)
 ```
 
-El prompt debe mostrar `(.venv)` al inicio.
+Debe aparecer `(.venv)` al inicio del prompt. Hazlo cada vez que abras una terminal nueva.
 
-## 5. Instalar las dependencias
-
-```bash
-python -m pip install anthropic python-dotenv
-```
-
-## 6. Crear `.gitignore`
-
-Escribe el nombre exacto, **sin espacios**:
+## 4. Crear `.gitignore`
 
 ```bash
 printf ".venv/\n.env\n" > .gitignore
-cat .gitignore
 ```
 
-Debe mostrar:
+## 5. Instalar dependencias
 
+Elige una ruta:
+
+```bash
+python -m pip install anthropic python-dotenv    # Anthropic
+python -m pip install openai python-dotenv       # OpenAI, o OpenRouter (recomendado)
+python -m pip install google-genai python-dotenv # Google Gemini
 ```
-.venv/
-.env
-```
 
-## 7. Crear el archivo `.env`
+## 6. Crear el archivo `.env`
 
-Crea un archivo llamado `.env` en la raíz del proyecto con tu clave (sin comillas ni espacios alrededor del `=`):
+Crea `.env` en la raíz del proyecto, sin comillas ni espacios alrededor del `=`. Usa una línea según tu proveedor:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
+OPENAI_API_KEY=sk-xxxxxxxxxxxxx
+GOOGLE_API_KEY=AIzaxxxxxxxxxxxxx
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxx
 ```
 
-> Si todavía no tienes la clave: crea una cuenta en `console.anthropic.com`, ve a **API Keys** y genera una. Cópiala en ese momento, porque no se vuelve a mostrar.
+Obtén la clave en: `console.anthropic.com` · `platform.openai.com` · `aistudio.google.com` · `openrouter.ai` (sección **Keys**). Cópiala al momento, porque no se vuelve a mostrar.
 
-## 8. Crear el script de verificación
+## 7. Verificar las claves
 
-Crea `verificar_claves.py` con este contenido:
+Crea `verificar_claves.py`:
 
 ```python
 import os
@@ -82,47 +71,73 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-claves = ["ANTHROPIC_API_KEY"]
+claves = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"]
 for clave in claves:
     valor = os.environ.get(clave, "")
-    estado = "OK" if valor else "FALTA"
-    print(f"{clave}: {estado}")
+    print(f"{clave}: {'OK' if valor else 'FALTA'}")
 ```
-
-## 9. Ejecutarlo
 
 ```bash
 python verificar_claves.py
 ```
 
-Salida esperada:
+La clave que vas a usar debe decir `OK`. Las demás pueden decir `FALTA`.
 
+## 8. Primer mensaje
+
+**OpenRouter con SDK de OpenAI:**
+
+```python
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+
+load_dotenv()
+
+cliente = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+)
+
+respuesta = cliente.chat.completions.create(
+    model="recursive/flint-v1.0:free",   # modelo gratuito; cambia por el ID que quieras
+    messages=[{"role": "user", "content": "Explica en tres frases qué hace un agente de IA."}],
+    max_tokens=256,
+)
+print(respuesta.choices[0].message.content)
 ```
-ANTHROPIC_API_KEY: OK
+
+**Anthropic:**
+
+```python
+from anthropic import Anthropic
+
+cliente = Anthropic()
+respuesta = cliente.messages.create(
+    model="claude-sonnet-5",   # confirma el nombre vigente
+    max_tokens=256,
+    messages=[{"role": "user", "content": "Explica en tres frases qué hace un agente de IA."}],
+)
+print(respuesta.content[0].text)
 ```
 
-Si dice `FALTA`, revisa que el `.env` esté en la misma carpeta desde donde ejecutas el script y que el nombre de la variable esté bien escrito.
+```bash
+python primer_mensaje.py
+```
 
-## 10. Guardar las dependencias
+## 9. Guardar dependencias
 
 ```bash
 python -m pip freeze > requirements.txt
 ```
 
-Para replicar el entorno en otra máquina:
+Para replicar en otra máquina: `python -m pip install -r requirements.txt`
 
-```bash
-python -m pip install -r requirements.txt
-```
+## 10. Conectar VS Code
 
-## 11. Conectar VS Code con el entorno
-
-1. Abre la carpeta `agentes-ia` en VS Code.
-2. Presiona `Ctrl+Shift+P` (o `Cmd+Shift+P` en Mac).
-3. Elige **Python: Select Interpreter**.
-4. Selecciona `.venv/bin/python` (macOS / Linux) o `.venv\Scripts\python.exe` (Windows).
-
-Abre una terminal integrada con `` Ctrl+` ``. Si VS Code activa el entorno solo, verás `(.venv)` sin escribir nada más.
+1. Abre la carpeta `agentes-ia`.
+2. `Ctrl+Shift+P` (o `Cmd+Shift+P`) → **Python: Select Interpreter**.
+3. Elige `.venv/bin/python` (macOS / Linux) o `.venv\Scripts\python.exe` (Windows).
 
 ---
 
@@ -131,10 +146,10 @@ Abre una terminal integrada con `` Ctrl+` ``. Si VS Code activa el entorno solo,
 - [ ] Python 3.10 o superior
 - [ ] `(.venv)` aparece en la terminal
 - [ ] `.gitignore` contiene `.venv/` y `.env`
-- [ ] `.env` tiene `ANTHROPIC_API_KEY`
-- [ ] `verificar_claves.py` muestra `OK`
+- [ ] `.env` tiene la clave de tu proveedor u OpenRouter
+- [ ] `verificar_claves.py` muestra `OK` para la clave que usas
 - [ ] VS Code usa el intérprete de `.venv`
 
 ## Antes de subir a GitHub
 
-Revisa `git status`. No deben aparecer `.env` ni `.venv/`. Si aparecen, revisa el `.gitignore` antes de hacer commit.
+Revisa `git status`. No deben aparecer `.env` ni `.venv/`.
