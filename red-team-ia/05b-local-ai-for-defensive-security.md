@@ -2,7 +2,7 @@
 
 Módulo 05: Arquitectura de IA, Prompt Engineering e IA Local · Penetration Testing con Kali Linux 1.0 · Red Team Leaders
 
-Complemento de `local-ai-for-offensive-security.md`. Mismo stack local, mismo criterio de confidencialidad, orientado a SOC, respuesta a incidentes, detection engineering y secure code review.
+Complemento de `05-local-ai-for-offensive-security.md`. Mismo stack local, mismo criterio de confidencialidad, orientado a SOC, respuesta a incidentes, detection engineering y secure code review.
 
 ## Introducción
 

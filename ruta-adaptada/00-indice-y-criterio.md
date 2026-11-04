@@ -1,42 +1,22 @@
-# Ruta adaptada — ingeniero DevSecOps en un equipo de innovación
+# Ruta adaptada — ejercicios DevSecOps
 
-Esta carpeta no agrega técnicas que el repositorio no tenga. Reordena el material que ya está, con el corte que corresponde a tu trabajo: productos con IA, pipelines de CI/CD, contenedores, IaC, cloud, y automatizaciones de seguridad. Lo ofensivo queda en los archivos originales. Aquí se usa la mitad que el propio material ya escribe al lado: detección, mitigación, hardening, validación de output, guardrails y el informe.
+Cada archivo de esta carpeta es un ejercicio con pasos. Los comandos, los schemas y las policies salen de los módulos del repositorio. El artefacto cambia: en vez de un target de pentest, el resultado es un control que puedes enseñar en la consultora.
 
-## Qué entra y qué no
+No hay técnicas nuevas. Si un paso no está en el módulo citado, no está aquí.
 
-Entra, porque el repositorio lo desarrolla y tu rol lo usa todas las semanas:
+## Orden
 
-- Entorno Linux y Python para arrancar un proyecto de automatización.
-- Contenedores, Compose, Kubernetes, microservicios, CI/CD, cloud, IaC y API gateway.
-- IA local, prompt engineering, RAG, agentes con scope, skills de Claude Code y Codex, y la evaluación de lo que el modelo devuelve.
-- El Top 10 de OWASP para aplicaciones y el tratamiento de fallas de aplicaciones LLM que ya está en las lecciones de RAG, agentes y prompt injection.
+1. `01-entorno-python.md` — el entorno con el que arranca cualquier automatización.
+2. `02-imagen-y-runtime.md` — imagen endurecida, scanners y el gate que falla el build.
+3. `03-kubernetes-rbac-y-admission.md` — el binding malo y la policy que lo rechaza.
+4. `04-cicd-e-iac.md` — permisos del workflow, digest, firma, tfsec y checkov.
+5. `05-prompts-devsecops.md` — los prompts que el material ya fija: evidencia, fix, y «no está en el corpus».
+6. `06-agente-local.md` — Ollama en loopback, la matriz de modelos de `~/soc-ai/` y un skill de triage.
+7. `07-cve-y-nvd.md` — la API de NVD que el material usa para no publicar un CVE inventado.
+8. `08-proyectos.md` — cuatro ensamblados con esas piezas, listos para presentar.
 
-No se reescribe aquí, porque es el caso raro y el procedimiento ya está en el fuente:
+## Qué no está en los pasos
 
-- Escapes de contenedor, abuso de RBAC, inyección en workflows y la cadena ofensiva de los objetivos 17, 20–23, 25, 26, 28 y 30 de `llm-agent-red-team/`.
-- Generación de payloads, phishing y PoC de las lecciones de skills y de red team.
+Los escapes, el volcado de Secrets, el payload de `pull_request_target`, el crack de JWT y la cadena de IMDS se quedan en el Markdown original. Aquí se corre la mitad que el propio lab llama detección, endurecimiento o parche.
 
-Cuando un lab del curso dice "haz el ataque y después el control", esta ruta te pide el control y la nota de detección. El ataque se lee en el archivo original, en el lab, contra el target del lab.
-
-## Huecos del fuente
-
-No inventé las lecciones que el `demo.txt` no trae:
-
-- `containers-security`: no está la lección 08. El texto de la 07 la nombra ("Container Escape Techniques and Kubernetes Attack Surface") y el contenido equivalente está repartido en las lecciones 03 y 04.
-- `python-for-security`: solo están la 01 y la 05. Faltan la 02, la 03 y la 04.
-- `llm-agent-red-team`: no hay "Lesson NN". Hay 33 bloques `Objective`, numerados en el orden del archivo.
-- `building-skills-with-claude-and-codex`: no está la lección 03. El cierre de la 02 la anuncia ("Creating Custom Pentest Prompts for Codex") y el archivo no la incluye.
-- `linux-security`: el `demo.txt` tiene las lecciones 01 a 12, todavía sin partir en Markdown. Esta ruta cita ese archivo y el número de lección.
-
-## Orden de lectura
-
-1. `01-base-linux-y-python.md`
-2. `02-contenedores-supply-chain-y-runtime.md`
-3. `03-kubernetes-microservicios-y-apis.md`
-4. `04-cicd-cloud-e-iac.md`
-5. `05-ia-local-prompts-rag-y-codigo.md`
-6. `06-agentes-skills-y-guardrails.md`
-7. `07-automatizacion-defensiva.md`
-8. `08-proyectos-para-la-consultora.md`
-
-Cada archivo dice qué leer, qué sección es el trabajo de tu rol, y un ejercicio que ya existe en ese material, cambiado de target: el artefacto es un control del pipeline, de la imagen, de la policy o del asistente interno. No es un target nuevo.
+No hay en el repositorio un documento titulado OWASP Top 10 for LLM Applications. El control de aplicaciones de IA que sí está escrito es el de las lecciones de RAG, de agentes y de prompt injection: allowlist, contexto recuperado que no es una orden, y la frase `Not covered by the corpus`.
