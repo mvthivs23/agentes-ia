@@ -1,6 +1,6 @@
 # 02 — Imagen y runtime
 
-Fuente: `02-containers-security/01-docker-fundamentals-and-internals.md` sección 15, `02-containers-security/03-container-security-and-escape-techniques.md` secciones 13 y 14, y el setup de Trivy en la lección 12.
+Fuente: `02-contenedores-pipelines-e-iac/01-docker-fundamentals-and-internals.md` sección 15, `02-contenedores-pipelines-e-iac/03-container-security-and-escape-techniques.md` secciones 13 y 14, y el setup de Trivy en la lección 12.
 
 Este es el patrón de imagen que después el pipeline publica. No incluye el escape por el socket.
 

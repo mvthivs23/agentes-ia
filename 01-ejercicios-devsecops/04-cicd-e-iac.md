@@ -1,6 +1,6 @@
 # 04 — CI/CD e IaC
 
-Fuente: `02-containers-security/06-cicd-pipeline-security.md` (secciones 6.3, 12, 15 y 16, y el parche de la sección 18) y `02-containers-security/10-infrastructure-as-code-and-configuration.md` (secciones 3, 5 y 14).
+Fuente: `02-contenedores-pipelines-e-iac/06-cicd-pipeline-security.md` (secciones 6.3, 12, 15 y 16, y el parche de la sección 18) y `02-contenedores-pipelines-e-iac/10-infrastructure-as-code-and-configuration.md` (secciones 3, 5 y 14).
 
 ## Paso 1 — Permisos del workflow
 

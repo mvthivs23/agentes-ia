@@ -1,6 +1,6 @@
 # 06 — Agente local para el trabajo defensivo
 
-Fuente: `04-red-team-ia/05b-local-ai-for-defensive-security.md` (Ollama, `~/soc-ai/`, la matriz) y el ejercicio «Construye un skill cve-triage» de `05-building-skills-with-claude-and-codex/01-claude-code-architecture-and-capabilities.md`.
+Fuente: `04-ia-local-prompts-y-rag/05b-local-ai-for-defensive-security.md` (Ollama, `~/soc-ai/`, la matriz) y el ejercicio «Construye un skill cve-triage» de `05-skills-claude-y-codex/01-claude-code-architecture-and-capabilities.md`.
 
 El agente no escanea fuera de lo que tú le pasas. Lee un informe, consulta NVD y escribe una nota. El modelo corre en loopback.
 

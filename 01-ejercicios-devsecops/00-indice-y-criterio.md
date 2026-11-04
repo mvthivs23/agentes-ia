@@ -8,14 +8,14 @@ No hay técnicas nuevas. Si un paso no está en el módulo citado, no está aqu�
 
 El 1 es lo que conviene abrir primero.
 
-1. `01-ruta-adaptada` — estos ejercicios.
-2. `02-containers-security` — imagen, Kubernetes, CI/CD, cloud e IaC.
-3. `03-python-for-security` — el entorno para escribir las automatizaciones.
-4. `04-red-team-ia` — prompts, modelo local, RAG y revisión de código.
-5. `05-building-skills-with-claude-and-codex` — skills, triage y la API de NVD.
-6. `06-llm-agent-red-team` — agentes, guardrails y el informe de compliance.
-7. `07-linux-security` — la base del sistema. El `demo.txt` sigue sin partir.
-8. `08-libro-python` — la introducción a agentes y a Python. Ya está cubierta por las carpetas de arriba.
+1. `01-ejercicios-devsecops` — estos ejercicios.
+2. `02-contenedores-pipelines-e-iac` — imagen, Kubernetes, CI/CD, cloud e IaC.
+3. `03-python-entorno-y-tools` — el entorno y el esqueleto de una tool.
+4. `04-ia-local-prompts-y-rag` — cómo hablarle a un modelo local: prompts, Ollama, RAG y revisión de código. No arma un agente.
+5. `05-skills-claude-y-codex` — skills, triage y la API de NVD dentro de Claude Code y Codex.
+6. `06-agentes-llm-flujos-y-guardrails` — el agente que encadena tools, los guardrails y cómo se evalúa. La carpeta 04 es el modelo; esta es el flujo.
+7. `07-linux-base` — la base del sistema. El `demo.txt` sigue sin partir.
+8. `08-introduccion-agentes` — qué es un agente y el primer entorno. Ya está cubierta por las carpetas de arriba.
 
 ## Orden de esta carpeta
 

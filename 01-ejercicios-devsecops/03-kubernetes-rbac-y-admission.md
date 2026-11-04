@@ -1,6 +1,6 @@
 # 03 — Kubernetes: RBAC y admission
 
-Fuente: `02-containers-security/04-kubernetes-architecture-and-attack-surface.md`, secciones 9 a 11 y el laboratorio 17. El laboratorio original escala desde el pod y vuelca Secrets. Esa mitad no se corre aquí. Se corre la mala configuración y la policy que la rechaza.
+Fuente: `02-contenedores-pipelines-e-iac/04-kubernetes-architecture-and-attack-surface.md`, secciones 9 a 11 y el laboratorio 17. El laboratorio original escala desde el pod y vuelca Secrets. Esa mitad no se corre aquí. Se corre la mala configuración y la policy que la rechaza.
 
 ## Paso 1 — El clúster de laboratorio
 
