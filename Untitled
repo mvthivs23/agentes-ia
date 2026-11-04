@@ -1,0 +1,1402 @@
+Lesson 12 — Lab: AI Setup and Prompt Engineering Exercises
+
+You will finish this lab with a small on-prem AI stack running on your own hardware — Ollama, ChromaDB, Open WebUI — plus four Python tools that read Nmap XML, HTTP responses, and finding YAML files and produce pentest-ready summaries.
+
+Everything runs locally so you can use it in client-confidential engagements without leaking data to a hosted model. The next time a customer objects to sending logs to OpenAI or Anthropic, you will already own the alternative.
+
+Module diagram
+
+    Module 05: AI Architecture, Prompt Engineering, and Local AI · Penetration Testing with Kali Linux 1.0 · Red Team Leaders
+
+1. Introduction
+
+Module 05 has walked you through the architectural, operational, and prompt-engineering layers of the modern LLM-augmented offensive-security workflow. Every prior lesson taught a slice in isolation — one lesson on transformer intuition, another on system prompts and few-shot design, another on tokenization and context windows, another on retrieval-augmented generation, another on running local models with Ollama, another on the MCP protocol, another on chain-of-thought and ReAct patterns, another on evaluation and guardrails.
+
+This lesson consolidates the module. You will build four production-grade AI-augmented pentest tools end-to-end. When the lab is finished you should be able to chmod +x each one, drop it into your personal ~/pentest-tools/ git repository, and reach for it during the enumeration, exploitation, and reporting phases of a real engagement. These are not throwaway demos — every subsequent module in the course assumes you have them and asks you to extend them. Module 06 (AI-Augmented Reconnaissance) explicitly wires the triage tool from Challenge 3 into an automated recon pipeline, and Module 12 (AI-Augmented Reporting) reuses the finding writer from Challenge 4.
+
+The four tools are:
+
+    pentest-assistant — a specialized local LLM built on top of llama3.1:8b with a security-focused system prompt, delivered as an Ollama Modelfile.
+    ragq — a Python CLI that indexes OWASP Top 10 and a small CVE corpus into ChromaDB, retrieves relevant chunks with nomic-embed-text, and answers pentest questions with a local Ollama model.
+    recon-triage — a Python tool that reads Nmap XML, calls a local LLM with a structured triage prompt, and returns hosts ranked by likely attack value as JSON.
+    finding-writer — a Python tool that reads a raw finding YAML and drafts a full Markdown finding card with executive summary, technical details, impact, and remediation, calling the Claude Sonnet 5 API with a graceful fallback to a local Ollama model when the API is unavailable.
+
+Each challenge is scoped so the reference implementation runs on Kali 2026 out of the box, and each ends with stretch goals that turn the tool into something you would actually want during a real op. Read the requirements, try to write it yourself, then compare against the reference. Do not just copy — type it, break it, understand it. The rubric at the end of this lesson is how the tools are graded when you submit them at the end of the module.
+
+A brief warning before you start: local models are non-deterministic. Two runs of the same prompt against the same weights will not produce byte-identical output. The grading rubric evaluates behavior, structure, and safety of your outputs — not string matches. When you build tests, assert on shape and content invariants rather than on exact strings.
+2. Lab Environment Setup
+2.1 Host requirements
+
+    Kali Linux 2026.1 VM (fresh from Module 01, snapshot preferred)
+    16 GB RAM minimum, 24 GB recommended (LLMs are memory-hungry)
+    50 GB free disk for models
+    A CPU with AVX2 (any Intel/AMD from the last decade), or an NVIDIA GPU with 8 GB+ VRAM if you want tolerable latency on llama3.1:8b
+    Outbound HTTPS reachability so ollama pull can fetch model weights and the Anthropic API call in Challenge 4 can reach api.anthropic.com
+
+Snapshot the VM before you start pulling models. If you botch a Modelfile or a virtualenv you want to roll back quickly.
+2.2 System toolchain
+
+Run this once as your normal (non-root) user on the Kali VM:
+sudo apt update
+sudo apt install -y \
+    python3 python3-venv python3-pip \
+    build-essential git jq curl wget \
+    tmux nmap yq
+
+python3 --version   # 3.11+
+git --version
+2.3 Ollama install and model pulls
+
+Ollama is the local model runner. Install it directly from upstream — Kali's repo lags:
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Confirm it runs as a systemd service and answers on the loopback API:
+systemctl status ollama --no-pager
+curl -s http://127.0.0.1:11434/api/tags | jq .
+
+Pull the three models this lesson needs. The first pull is slow — go get a coffee:
+# Chat model used by every challenge for generation.
+ollama pull llama3.1:8b
+
+# A slightly heavier model used as the fallback in Challenge 4.
+ollama pull llama3.1:8b-instruct-q5_K_M
+
+# Embedding model used by the RAG challenge (Challenge 2).
+ollama pull nomic-embed-text
+
+Sanity check that generation works before you write any Python:
+ollama run llama3.1:8b "In one sentence, what is a reverse shell?"
+2.4 Python workspace and dependencies
+
+Create the workspace and Python virtualenv that every tool in this lesson will share:
+mkdir -p ~/pentest-tools
+cd ~/pentest-tools
+git init
+git branch -M main
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+
+pip install \
+    anthropic==0.40.0 \
+    openai==1.55.3 \
+    ollama==0.4.4 \
+    chromadb==0.5.23 \
+    pyyaml==6.0.2 \
+    rich==13.9.4 \
+    typer==0.15.1 \
+    lxml==5.3.0 \
+    tenacity==9.0.0 \
+    tiktoken==0.8.0
+
+pip freeze > requirements.txt
+git add requirements.txt
+git commit -m "chore: pin baseline AI toolchain for Module 05 lab"
+2.5 API credentials
+
+Challenge 4 calls the Claude Sonnet 5 API. Put your key in a .env-style file that is not committed:
+mkdir -p ~/.config/pentest-tools
+cat > ~/.config/pentest-tools/env <<'EOF'
+ANTHROPIC_API_KEY=sk-ant-...replace-me...
+ANTHROPIC_MODEL=claude-sonnet-5-20260101
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_CHAT_MODEL=llama3.1:8b
+OLLAMA_EMBED_MODEL=nomic-embed-text
+EOF
+chmod 600 ~/.config/pentest-tools/env
+
+Load it in every shell that runs the lab tools:
+set -a
+. ~/.config/pentest-tools/env
+set +a
+
+Add a .gitignore for the workspace before you commit anything else:
+cat > ~/pentest-tools/.gitignore <<'EOF'
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.env
+.env
+chroma-db/
+outputs/
+EOF
+git add .gitignore
+git commit -m "chore: gitignore venv, cache, chroma, outputs"
+2.6 Directory layout
+
+Every challenge lives in its own subdirectory of ~/pentest-tools/:
+~/pentest-tools/
+├── .venv/
+├── .gitignore
+├── requirements.txt
+├── pentest-assistant/           # Challenge 1
+│   ├── Modelfile
+│   └── test_assistant.py
+├── ragq/                        # Challenge 2
+│   ├── corpus/
+│   ├── index.py
+│   └── ragq.py
+├── recon-triage/                # Challenge 3
+│   ├── triage.py
+│   └── samples/
+└── finding-writer/              # Challenge 4
+    ├── write_finding.py
+    └── samples/
+
+Create the skeleton now so you can drop files straight in:
+cd ~/pentest-tools
+mkdir -p pentest-assistant ragq/corpus recon-triage/samples finding-writer/samples
+3. Challenge 1 — Ollama pentest-assistant Modelfile
+3.1 Requirements
+
+Build a specialized local LLM you can invoke as ollama run pentest-assistant "...". The Modelfile must:
+
+    Use llama3.1:8b as the base model.
+    Set the sampling temperature to 0.3 so the assistant is deterministic enough for offensive-security work (creativity is a liability when you are enumerating hosts).
+    Set num_ctx to 8192 so long Nmap outputs, HTTP responses, and code snippets all fit in one turn.
+    Set top_p to 0.9 and repeat_penalty to 1.15.
+    Carry a security-focused system prompt that:
+        Establishes the persona as a senior offensive-security operator supporting an authorized engagement.
+        Requires citation of MITRE ATT&CK technique IDs where relevant.
+        Requires the model to refuse to help with attacks against systems the user has not confirmed are in-scope, and to ask for the engagement's Rules of Engagement (RoE) if scope is ambiguous.
+        Requires structured answers with the sections: Summary, Steps, Detection, Cleanup.
+    Add at least one MESSAGE user / MESSAGE assistant few-shot example so the model latches onto the output format.
+    Build cleanly with ollama create pentest-assistant -f Modelfile.
+
+Deliverables: the Modelfile, the ollama create invocation, and a Python test_assistant.py that runs three probe prompts and asserts the output shape.
+3.2 Reference implementation
+
+~/pentest-tools/pentest-assistant/Modelfile:
+# pentest-assistant — a specialized local LLM for authorized offensive-security
+# engagements. Built on llama3.1:8b. Not for use against out-of-scope systems.
+
+FROM llama3.1:8b
+
+PARAMETER temperature 0.3
+PARAMETER num_ctx 8192
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.15
+PARAMETER stop "<|user|>"
+PARAMETER stop "<|assistant|>"
+
+SYSTEM """
+You are pentest-assistant, a senior offensive-security operator embedded with a
+red team on an *authorized* engagement. The operator ("user") is a professional
+penetration tester who has signed a Rules of Engagement (RoE) document with the
+client. You support only work that falls inside that RoE.
+
+Ground rules you must follow on every turn:
+
+1. Assume authorization is in place unless the user gives you a target that
+   contradicts it (e.g. .gov, .mil, ".edu of a school not named in the RoE",
+   named production systems of well-known companies). When authorization is
+   ambiguous, ask the user for the in-scope target list before proceeding.
+2. Never provide guidance for attacks against people, election systems,
+   critical infrastructure the user has not confirmed is in-scope, or any
+   system belonging to a party the user has not confirmed is a client.
+3. Cite MITRE ATT&CK technique IDs (e.g. T1059.001, T1021.006) whenever a
+   step maps to one. This lets the user reconcile findings against the
+   client's detection posture.
+4. Prefer techniques that respect the client's stated Impact tier. If the
+   user has not stated a tier, assume "Low impact — no service disruption".
+5. Do not fabricate CVE numbers, tool flags, or file paths. If you are not
+   sure, say so and suggest a verification step.
+
+Structure every substantive answer with these four sections, in order:
+
+    ## Summary
+    One or two sentences, plain English, what you are about to do.
+
+    ## Steps
+    A numbered list of concrete, copy-pastable commands or actions. Mark
+    the ATT&CK technique on each step where applicable, e.g. "(T1046)".
+
+    ## Detection
+    What the blue team would see if this were run against a monitored
+    environment. Name the log source (Sysmon event ID, Suricata rule
+    category, EDR telemetry) where possible.
+
+    ## Cleanup
+    What artifacts you leave behind and how to remove them (files, users,
+    registry keys, scheduled tasks, network sockets, shell history).
+
+For questions that are conceptual rather than procedural, keep the four
+sections but let "Steps" become the explanation. Never skip a section.
+"""
+
+TEMPLATE """{{ if .System }}<|system|>
+{{ .System }}<|end|>{{ end }}{{ if .Prompt }}<|user|>
+{{ .Prompt }}<|end|>{{ end }}<|assistant|>
+{{ .Response }}<|end|>"""
+
+MESSAGE user "Nmap says a host has TCP 445 open on Windows Server 2019. What is my first move?"
+MESSAGE assistant """## Summary
+Enumerate the SMB service to fingerprint the OS build, list null-session
+accessible shares, and probe for known SMB CVEs relevant to Server 2019.
+
+## Steps
+1. Grab the SMB dialect and OS build (T1046):
+   `nmap -p 445 --script smb-protocols,smb-os-discovery <TARGET>`
+2. Enumerate shares with a null session, then with any creds you already own (T1135):
+   `smbclient -N -L //<TARGET>/`
+   `nxc smb <TARGET> -u '' -p '' --shares`
+3. Check for the SMB signing posture — required vs. not required (T1557.001):
+   `nxc smb <TARGET> --gen-relay-list relay.txt`
+4. Look for MS17-010 residue (rare on 2019 but cheap to check) (T1210):
+   `nmap -p 445 --script smb-vuln-ms17-010 <TARGET>`
+
+## Detection
+- Windows Event 5145 (share access) fires on step 2 with anonymous logon.
+- Sysmon Event 3 (network connect) on the attacker's source IP.
+- Suricata "ET SCAN Behavioral Unusually fast Terminal Server Traffic"
+  variants will fire if your scan is too fast.
+
+## Cleanup
+- No files written on the target for enumeration only.
+- Clear the local scan output when you snapshot findings:
+  `rm -f nmap.out smb-relay.txt` and unset shell history for the session
+  with `unset HISTFILE` before you start."""
+
+Build and register the model:
+cd ~/pentest-tools/pentest-assistant
+ollama create pentest-assistant -f Modelfile
+ollama list | grep pentest-assistant
+
+Expected output:
+NAME                       ID              SIZE      MODIFIED
+pentest-assistant:latest   a1b2c3d4e5f6    4.7 GB    a few seconds ago
+
+Quick smoke test at the CLI:
+ollama run pentest-assistant "I have a foothold on a Linux box as www-data. Where do I look first for a local privesc?"
+
+You should see the four required sections back. If any section is missing, tighten the SYSTEM prompt — the model prompt is code, and it fails like code.
+3.3 test_assistant.py
+
+~/pentest-tools/pentest-assistant/test_assistant.py:
+#!/usr/bin/env python3
+"""Smoke test for the pentest-assistant Ollama model.
+
+Runs three probe prompts and asserts that every response contains the four
+mandatory sections. Uses the official Ollama Python client so we exercise the
+same code path production callers will.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import dataclass
+
+import ollama
+
+MODEL = os.environ.get("PA_MODEL", "pentest-assistant")
+HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+REQUIRED_SECTIONS = ("## Summary", "## Steps", "## Detection", "## Cleanup")
+
+PROBES = [
+    "I have a foothold on a Linux box as www-data. Where do I look first for a local privesc?",
+    "Web app returns 500 on ?id=1' but 200 on ?id=1. How should I confirm SQLi?",
+    "Nmap shows TCP/5985 open on a Windows host. Walk me through initial access.",
+]
+
+
+@dataclass
+class ProbeResult:
+    prompt: str
+    ok: bool
+    missing: list[str]
+    excerpt: str
+
+
+def run_probe(prompt: str) -> ProbeResult:
+    client = ollama.Client(host=HOST)
+    resp = client.chat(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    body = resp["message"]["content"]
+    missing = [s for s in REQUIRED_SECTIONS if s not in body]
+    return ProbeResult(
+        prompt=prompt,
+        ok=not missing,
+        missing=missing,
+        excerpt=body[:400] + ("..." if len(body) > 400 else ""),
+    )
+
+
+def main() -> int:
+    results = [run_probe(p) for p in PROBES]
+    failures = [r for r in results if not r.ok]
+
+    for r in results:
+        status = "PASS" if r.ok else "FAIL"
+        print(f"[{status}] {r.prompt}")
+        if r.missing:
+            print(f"       missing sections: {', '.join(r.missing)}")
+        print(f"       excerpt: {r.excerpt}\n")
+
+    if failures:
+        print(f"{len(failures)}/{len(results)} probes failed section check.")
+        return 1
+    print(f"All {len(results)} probes returned the required sections.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+Run it:
+cd ~/pentest-tools/pentest-assistant
+python test_assistant.py
+
+Expected happy path:
+[PASS] I have a foothold on a Linux box as www-data...
+       excerpt: ## Summary\nOn a fresh www-data foothold, ...
+
+[PASS] Web app returns 500 on ?id=1' but 200 on ?id=1...
+       excerpt: ## Summary\nThe divergent status codes suggest ...
+
+[PASS] Nmap shows TCP/5985 open on a Windows host...
+       excerpt: ## Summary\nTCP/5985 is WinRM over HTTP. ...
+
+All 3 probes returned the required sections.
+3.4 Stretch goals
+
+    Add a second Modelfile that inherits from pentest-assistant and enforces "read-only enumeration only" for junior operators.
+    Add a PARAMETER seed to make the model deterministic in unit tests, and add tests that assert on specific ATT&CK IDs appearing in the output.
+    Wrap ollama run pentest-assistant as a zsh widget bound to a keystroke so you can query it from any tmux pane.
+
+4. Challenge 2 — Pentest RAG Knowledge Base
+4.1 Requirements
+
+Build ragq, a Retrieval-Augmented Generation CLI. It must:
+
+    Ingest a small corpus containing:
+        The OWASP Top 10 (2021) with a short description of each item.
+        At least eight CVE descriptions (title, CVSS, brief technical description).
+    Chunk the corpus and embed each chunk with the local nomic-embed-text Ollama model.
+    Persist the vectors and metadata in ChromaDB under ~/pentest-tools/ragq/chroma-db/.
+    Expose a Typer CLI with two commands:
+        index — (re)build the vector store from corpus/.
+        ask "question" — retrieve top-k chunks (default k=4), pass them plus the question into the local llama3.1:8b model, and print a cited answer.
+    Every answer must print the source ids of the chunks it used, so the operator can audit hallucination.
+    Refuse to answer questions that are outside the scope of the corpus (e.g. random tax questions) — the model must say so, not guess.
+
+Deliverables: corpus/ populated, index.py, ragq.py. Target around 200 lines of Python total.
+4.2 Corpus files
+
+Create the corpus files under ~/pentest-tools/ragq/corpus/.
+
+corpus/owasp-top10-2021.md:
+# OWASP Top 10 — 2021
+
+## A01:2021 - Broken Access Control
+Access control enforces policy such that users cannot act outside their intended
+permissions. Failures typically lead to unauthorized information disclosure,
+modification, or destruction of data. Common vectors include IDOR, forced
+browsing to authenticated pages, JWT tampering, and CORS misconfiguration.
+
+## A02:2021 - Cryptographic Failures
+Previously "Sensitive Data Exposure". Root causes are transmitting or storing
+sensitive data without encryption, using weak or deprecated algorithms
+(MD5, SHA-1, DES, RC4), and mishandling keys. Consequences include credential
+theft, session hijack, and regulated-data breach.
+
+## A03:2021 - Injection
+Includes SQL, NoSQL, OS command, LDAP, and expression-language injection.
+Occurs when untrusted data is sent to an interpreter as part of a command or
+query. XSS was folded in for 2021. Mitigations: parameterized queries,
+positive server-side input validation, escape output.
+
+## A04:2021 - Insecure Design
+A new category focused on missing or ineffective control design. Distinct from
+implementation flaws — even a perfectly implemented insecure design is
+exploitable. Threat modeling, secure design patterns, and reference
+architectures are the countermeasures.
+
+## A05:2021 - Security Misconfiguration
+Default accounts, verbose error messages, unnecessary features enabled,
+missing security headers, out-of-date software. Cloud services and container
+platforms have expanded the surface. XXE joined this category for 2021.
+
+## A06:2021 - Vulnerable and Outdated Components
+Using components with known CVEs. Includes direct and transitive dependencies.
+Countermeasures: SBOM, dependency pinning, continuous vulnerability scanning
+(OWASP Dependency-Check, Snyk, Trivy).
+
+## A07:2021 - Identification and Authentication Failures
+Weak credentials, credential stuffing, missing MFA, insecure session
+management, exposed session IDs, brute-force endpoints without lockout.
+Countermeasures: MFA, strong password policy, credential-stuffing detection,
+short session lifetime, secure cookie flags.
+
+## A08:2021 - Software and Data Integrity Failures
+CI/CD pipeline compromise, unsigned software updates, deserialization of
+untrusted data. Relevant CVEs include Log4Shell-style RCE through crafted
+lookup strings and SolarWinds-style supply-chain implants.
+
+## A09:2021 - Security Logging and Monitoring Failures
+Missing or inadequate logging, no alerting, no incident response. Increases
+dwell time. Detection engineering must cover authentication events, access
+control failures, and server-side input validation failures at minimum.
+
+## A10:2021 - Server-Side Request Forgery (SSRF)
+The application fetches a remote resource without validating the user-supplied
+URL. Especially dangerous in cloud environments where the metadata service
+(169.254.169.254) issues short-lived credentials. Mitigations: allow-list URLs,
+disable redirects, network-segment egress.
+
+corpus/cve-notes.md:
+# CVE Notes — selected high-impact vulnerabilities
+
+## CVE-2021-44228 — Log4Shell
+Category: Software and Data Integrity Failures (A08).
+CVSSv3: 10.0.
+Apache Log4j 2 versions 2.0-beta9 through 2.14.1 evaluate JNDI lookup strings
+found in logged messages. An attacker who can cause a vulnerable application
+to log an attacker-controlled string (User-Agent, X-Forwarded-For, form input)
+can achieve unauthenticated remote code execution via LDAP or RMI callback.
+
+## CVE-2017-0144 — EternalBlue (MS17-010)
+Category: Vulnerable and Outdated Components (A06).
+CVSSv3: 8.1.
+SMBv1 in Microsoft Windows allows a remote attacker to execute code via
+crafted packets that mishandle transaction structures. Basis for WannaCry
+and NotPetya. Patched in MS17-010. Legacy Windows Server 2003/2008
+without patch is trivially owned.
+
+## CVE-2014-0160 — Heartbleed
+Category: Cryptographic Failures (A02).
+CVSSv3: 7.5.
+OpenSSL 1.0.1 through 1.0.1f mis-parses the TLS heartbeat extension length,
+allowing a remote attacker to read up to 64 KB of process memory per request.
+Leaked private keys and session cookies. Mitigation: upgrade OpenSSL, rotate
+keys, revoke certificates.
+
+## CVE-2019-0708 — BlueKeep
+Category: Vulnerable and Outdated Components (A06).
+CVSSv3: 9.8.
+Windows RDP pre-auth use-after-free in older Windows versions (7, Server 2008
+R2, XP, Server 2003). Wormable. Enable NLA and patch or block TCP/3389.
+
+## CVE-2021-34527 — PrintNightmare
+Category: Security Misconfiguration (A05).
+CVSSv3: 8.8.
+Windows Print Spooler allows a remote authenticated attacker to load an
+arbitrary DLL via crafted RPC calls, gaining SYSTEM. Mitigations: disable
+the Print Spooler on servers that do not need it, restrict Point and Print.
+
+## CVE-2020-1472 — Zerologon
+Category: Identification and Authentication Failures (A07).
+CVSSv3: 10.0.
+Netlogon MS-NRPC uses AES-CFB8 with an all-zero IV, letting an unauthenticated
+attacker on the network set the domain-controller machine account password to
+empty, escalating to Domain Admin. Patch and monitor Netlogon events 4742.
+
+## CVE-2022-30190 — Follina
+Category: Injection (A03).
+CVSSv3: 7.8.
+Microsoft Support Diagnostic Tool (MSDT) URL handler executes attacker-supplied
+PowerShell when a Word document references an ms-msdt: URI. Delivered via
+phishing. Disable the ms-msdt handler in the registry as a workaround.
+
+## CVE-2023-23397 — Outlook NTLM Leak
+Category: Broken Access Control (A01).
+CVSSv3: 9.8.
+Microsoft Outlook processes a crafted meeting invite that references a UNC
+path in PidLidReminderFileParameter, causing the client to send NTLMv2 to
+attacker-controlled SMB. Relayable to internal services. Zero-click.
+4.3 index.py — build the vector store
+
+~/pentest-tools/ragq/index.py:
+#!/usr/bin/env python3
+"""Build (or rebuild) the ragq ChromaDB vector store from ./corpus/*.md."""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+from pathlib import Path
+
+import chromadb
+import ollama
+
+CORPUS_DIR = Path(__file__).parent / "corpus"
+DB_DIR = Path(__file__).parent / "chroma-db"
+COLLECTION = "pentest-kb"
+
+EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+
+def chunk_markdown(text: str) -> list[tuple[str, str]]:
+    """Split on level-2 headings so each chunk is one OWASP item or one CVE."""
+    parts = re.split(r"(?=^## )", text, flags=re.MULTILINE)
+    chunks: list[tuple[str, str]] = []
+    for part in parts:
+        part = part.strip()
+        if not part or not part.startswith("## "):
+            continue
+        first_line, _, _ = part.partition("\n")
+        title = first_line.removeprefix("## ").strip()
+        chunks.append((title, part))
+    return chunks
+
+
+def embed(client: ollama.Client, text: str) -> list[float]:
+    resp = client.embeddings(model=EMBED_MODEL, prompt=text)
+    return resp["embedding"]
+
+
+def main() -> int:
+    if not CORPUS_DIR.exists():
+        print(f"corpus dir missing: {CORPUS_DIR}", file=sys.stderr)
+        return 2
+
+    files = sorted(CORPUS_DIR.glob("*.md"))
+    if not files:
+        print(f"no markdown files in {CORPUS_DIR}", file=sys.stderr)
+        return 2
+
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+    chroma = chromadb.PersistentClient(path=str(DB_DIR))
+    if COLLECTION in [c.name for c in chroma.list_collections()]:
+        chroma.delete_collection(COLLECTION)
+    coll = chroma.create_collection(
+        name=COLLECTION,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+    oll = ollama.Client(host=OLLAMA_HOST)
+
+    ids: list[str] = []
+    docs: list[str] = []
+    metas: list[dict] = []
+    vecs: list[list[float]] = []
+
+    for f in files:
+        for i, (title, body) in enumerate(chunk_markdown(f.read_text())):
+            chunk_id = f"{f.stem}::{i:03d}"
+            ids.append(chunk_id)
+            docs.append(body)
+            metas.append({"source": f.name, "title": title})
+            vecs.append(embed(oll, body))
+            print(f"  embedded {chunk_id} — {title}")
+
+    coll.add(ids=ids, documents=docs, metadatas=metas, embeddings=vecs)
+    print(f"\nindexed {len(ids)} chunks into {DB_DIR}/{COLLECTION}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+Run it:
+cd ~/pentest-tools/ragq
+python index.py
+
+Expected tail of output:
+  embedded cve-notes::007 — CVE-2023-23397 — Outlook NTLM Leak
+indexed 18 chunks into /home/kali/pentest-tools/ragq/chroma-db/pentest-kb
+4.4 ragq.py — the CLI
+
+~/pentest-tools/ragq/ragq.py:
+#!/usr/bin/env python3
+"""ragq — ask pentest questions against a local RAG knowledge base."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import chromadb
+import ollama
+import typer
+from rich.console import Console
+from rich.markdown import Markdown
+
+DB_DIR = Path(__file__).parent / "chroma-db"
+COLLECTION = "pentest-kb"
+
+CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "llama3.1:8b")
+EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+app = typer.Typer(add_completion=False, help="Local RAG for pentest questions.")
+console = Console()
+
+SYSTEM = """You are a senior pentester answering a colleague's question using
+ONLY the provided knowledge-base excerpts. Follow these rules strictly:
+
+- If the excerpts do not contain the answer, say "Not covered by the corpus"
+  and suggest what the operator should look up next. Do not guess.
+- Cite every claim with the chunk id in square brackets, e.g. [cve-notes::003].
+- Prefer excerpt text over general knowledge — this corpus is authoritative
+  for the engagement.
+- Keep answers under 250 words unless the operator asks for depth.
+"""
+
+
+@app.command()
+def index() -> None:
+    """Rebuild the vector store from ./corpus/*.md (delegates to index.py)."""
+    here = Path(__file__).parent
+    rc = subprocess.call([sys.executable, str(here / "index.py")])
+    raise typer.Exit(code=rc)
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(..., help="Pentest question to answer."),
+    k: int = typer.Option(4, "--k", help="Number of chunks to retrieve."),
+    show_context: bool = typer.Option(
+        False, "--show-context", help="Print retrieved chunks before the answer."
+    ),
+) -> None:
+    """Retrieve the top-k relevant chunks and answer the question."""
+    if not DB_DIR.exists():
+        console.print(f"[red]no vector store at {DB_DIR}[/red] — run `ragq index` first")
+        raise typer.Exit(code=2)
+
+    chroma = chromadb.PersistentClient(path=str(DB_DIR))
+    coll = chroma.get_collection(COLLECTION)
+
+    oll = ollama.Client(host=OLLAMA_HOST)
+    q_vec = oll.embeddings(model=EMBED_MODEL, prompt=question)["embedding"]
+
+    hits = coll.query(query_embeddings=[q_vec], n_results=k)
+    ids = hits["ids"][0]
+    docs = hits["documents"][0]
+    metas = hits["metadatas"][0]
+
+    context_blocks = []
+    for cid, doc, meta in zip(ids, docs, metas):
+        header = f"[{cid}] {meta.get('title', '')} (source: {meta.get('source', '')})"
+        context_blocks.append(header + "\n" + doc)
+    context = "\n\n---\n\n".join(context_blocks)
+
+    if show_context:
+        console.rule("retrieved context")
+        console.print(context)
+        console.rule("answer")
+
+    user_msg = f"""Question:
+{question}
+
+Knowledge-base excerpts (cite by chunk id in brackets):
+
+{context}
+"""
+
+    resp = oll.chat(
+        model=CHAT_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user_msg},
+        ],
+        options={"temperature": 0.2, "num_ctx": 8192},
+    )
+    answer = resp["message"]["content"]
+
+    console.print(Markdown(answer))
+    console.rule()
+    console.print("[dim]cited sources:[/dim] " + ", ".join(ids))
+
+
+if __name__ == "__main__":
+    app()
+
+Try it:
+cd ~/pentest-tools/ragq
+python ragq.py ask "Which OWASP category does Log4Shell fall under and what makes it wormable-adjacent?"
+
+Expected output shape:
+CVE-2021-44228 (Log4Shell) is classified under OWASP A08:2021 — Software and
+Data Integrity Failures [cve-notes::000]. It is not wormable in the strict
+NotPetya sense, but any application that logs attacker-controlled input to a
+vulnerable Log4j 2 (2.0-beta9 through 2.14.1) evaluates the JNDI lookup and
+allows unauthenticated RCE via LDAP/RMI callback [cve-notes::000] ...
+
+────────────────────────────
+cited sources: cve-notes::000, owasp-top10-2021::007, ...
+
+Confirm the refuse-out-of-scope behavior:
+python ragq.py ask "What is the capital of Peru?"
+# → "Not covered by the corpus. Consult Wikipedia or a geography reference."
+4.5 Stretch goals
+
+    Extend the corpus to ingest the full HackTricks book. You'll want a smarter chunker (sliding window with overlap) and metadata that tracks the source URL.
+    Add a --json output mode that emits the answer plus citations as machine-readable JSON so downstream tools can consume it.
+    Track per-chunk retrieval frequency and surface a "top cited chunks" report — useful for gap analysis on the KB.
+
+5. Challenge 3 — AI-Assisted Recon Triage
+5.1 Requirements
+
+Build recon-triage, a tool that ingests an Nmap XML scan and returns a ranked JSON list of hosts by likely attack value. It must:
+
+    Take an Nmap XML file on the command line (nmap -oX).
+    Parse the XML with lxml and produce a normalized per-host record: IP, hostname, ports, service versions, script output snippets.
+    Batch the host records into a single LLM call (or one call per host if the batch is too large for the context) with a structured triage prompt. The prompt must ask the model to score each host 0-100 for attack value and to produce a short rationale and up to three attack-vector suggestions with MITRE ATT&CK IDs.
+    Parse the model output back into JSON. Never trust the model's raw output — validate against a schema and drop hosts that fail validation with a clear warning.
+    Emit a final JSON document sorted by score descending, and print a rich table summary to stdout.
+
+Deliverables: triage.py, one sample XML under samples/. Target around 150 lines of Python.
+5.2 Sample Nmap XML
+
+Generate a sample so the tool can be tested without needing a live target. Put a realistic scan under ~/pentest-tools/recon-triage/samples/scan.xml:
+cat > ~/pentest-tools/recon-triage/samples/scan.xml <<'EOF'
+<?xml version="1.0"?>
+<nmaprun scanner="nmap" args="nmap -sV -sC -oX scan.xml 10.10.10.0/24" version="7.94">
+  <host><status state="up"/><address addr="10.10.10.5" addrtype="ipv4"/>
+    <hostnames><hostname name="dc01.corp.local" type="user"/></hostnames>
+    <ports>
+      <port protocol="tcp" portid="53"><state state="open"/>
+        <service name="domain" product="Microsoft DNS" version="10.0.17763"/></port>
+      <port protocol="tcp" portid="88"><state state="open"/>
+        <service name="kerberos-sec" product="Microsoft Windows Kerberos"/></port>
+      <port protocol="tcp" portid="445"><state state="open"/>
+        <service name="microsoft-ds" product="Windows Server 2019" version="10.0.17763"/></port>
+      <port protocol="tcp" portid="3389"><state state="open"/>
+        <service name="ms-wbt-server" product="Microsoft Terminal Services"/></port>
+    </ports>
+  </host>
+  <host><status state="up"/><address addr="10.10.10.10" addrtype="ipv4"/>
+    <hostnames><hostname name="web01.corp.local" type="user"/></hostnames>
+    <ports>
+      <port protocol="tcp" portid="80"><state state="open"/>
+        <service name="http" product="Apache httpd" version="2.4.49"/></port>
+      <port protocol="tcp" portid="22"><state state="open"/>
+        <service name="ssh" product="OpenSSH" version="7.4"/></port>
+    </ports>
+  </host>
+  <host><status state="up"/><address addr="10.10.10.20" addrtype="ipv4"/>
+    <hostnames><hostname name="printer01.corp.local" type="user"/></hostnames>
+    <ports>
+      <port protocol="tcp" portid="9100"><state state="open"/>
+        <service name="jetdirect" product="HP JetDirect"/></port>
+      <port protocol="tcp" portid="631"><state state="open"/>
+        <service name="ipp" product="CUPS" version="1.7.2"/></port>
+    </ports>
+  </host>
+</nmaprun>
+EOF
+5.3 triage.py
+
+~/pentest-tools/recon-triage/triage.py:
+#!/usr/bin/env python3
+"""recon-triage — rank Nmap-discovered hosts by likely attack value using a
+local LLM. Reads Nmap XML, calls Ollama with a structured triage prompt,
+validates the JSON response, and emits ranked JSON on stdout."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+import ollama
+import typer
+from lxml import etree
+from rich.console import Console
+from rich.table import Table
+
+CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "llama3.1:8b")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+app = typer.Typer(add_completion=False, help="AI-assisted Nmap recon triage.")
+console = Console(stderr=True)
+
+
+@dataclass
+class Port:
+    port: int
+    proto: str
+    service: str
+    product: str
+    version: str
+
+
+@dataclass
+class Host:
+    ip: str
+    hostname: str
+    ports: list[Port]
+
+
+SYSTEM = """You are a senior red-team operator triaging Nmap results for a
+time-boxed engagement. For each host you receive, return a JSON object with:
+
+  - "ip": the host IP (verbatim from the input)
+  - "score": integer 0-100. 100 = highest attack value (domain controller,
+    unauthenticated RCE candidate, credential store). 0 = no attack value.
+  - "rationale": one sentence explaining the score
+  - "vectors": array of up to three objects, each with keys:
+      "technique": short name, e.g. "SMB relay"
+      "attack_id": MITRE ATT&CK ID, e.g. "T1557.001"
+      "note": one sentence, concrete next step
+
+Return ONLY a top-level JSON array of these host objects. No prose, no markdown
+code fences. If a host has no ports or is not interesting, still return an entry
+with score 0 and rationale explaining why.
+"""
+
+
+def parse_nmap(path: Path) -> list[Host]:
+    tree = etree.parse(str(path))
+    hosts: list[Host] = []
+    for hnode in tree.findall(".//host"):
+        state = hnode.find("status")
+        if state is None or state.get("state") != "up":
+            continue
+        addr_node = hnode.find("address[@addrtype='ipv4']")
+        if addr_node is None:
+            continue
+        ip = addr_node.get("addr", "")
+        hn_node = hnode.find(".//hostname")
+        hostname = hn_node.get("name", "") if hn_node is not None else ""
+        ports: list[Port] = []
+        for p in hnode.findall(".//port"):
+            st = p.find("state")
+            if st is None or st.get("state") != "open":
+                continue
+            svc = p.find("service")
+            ports.append(
+                Port(
+                    port=int(p.get("portid", "0")),
+                    proto=p.get("protocol", ""),
+                    service=svc.get("name", "") if svc is not None else "",
+                    product=svc.get("product", "") if svc is not None else "",
+                    version=svc.get("version", "") if svc is not None else "",
+                )
+            )
+        hosts.append(Host(ip=ip, hostname=hostname, ports=ports))
+    return hosts
+
+
+def build_prompt(hosts: list[Host]) -> str:
+    lines = ["Hosts to triage:\n"]
+    for h in hosts:
+        lines.append(f"- {h.ip} ({h.hostname or 'no-hostname'})")
+        for p in h.ports:
+            lines.append(
+                f"    {p.port}/{p.proto}  {p.service}  {p.product} {p.version}".rstrip()
+            )
+    lines.append("\nRespond with the JSON array as instructed.")
+    return "\n".join(lines)
+
+
+def extract_json_array(raw: str) -> list[dict]:
+    """Best-effort recovery of a JSON array from the model output."""
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?", "", raw)
+    raw = re.sub(r"```$", "", raw)
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1:
+        raise ValueError("no JSON array found in model output")
+    return json.loads(raw[start : end + 1])
+
+
+def validate(items: list[dict], hosts: list[Host]) -> list[dict]:
+    ips = {h.ip for h in hosts}
+    clean: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            console.print("[yellow]dropping non-object item[/yellow]")
+            continue
+        if item.get("ip") not in ips:
+            console.print(f"[yellow]dropping unknown ip {item.get('ip')!r}[/yellow]")
+            continue
+        try:
+            score = int(item.get("score", -1))
+        except (TypeError, ValueError):
+            score = -1
+        if not 0 <= score <= 100:
+            console.print(f"[yellow]dropping {item['ip']} — bad score[/yellow]")
+            continue
+        clean.append({
+            "ip": item["ip"],
+            "score": score,
+            "rationale": str(item.get("rationale", ""))[:400],
+            "vectors": [
+                {
+                    "technique": str(v.get("technique", ""))[:80],
+                    "attack_id": str(v.get("attack_id", ""))[:20],
+                    "note": str(v.get("note", ""))[:400],
+                }
+                for v in (item.get("vectors") or [])[:3]
+                if isinstance(v, dict)
+            ],
+        })
+    return clean
+
+
+@app.command()
+def main(
+    xml: Path = typer.Argument(..., exists=True, readable=True, help="Nmap XML file."),
+    output: Path = typer.Option(None, "--out", help="Write ranked JSON here."),
+) -> None:
+    hosts = parse_nmap(xml)
+    if not hosts:
+        console.print("[red]no live hosts in scan[/red]")
+        raise typer.Exit(code=1)
+
+    oll = ollama.Client(host=OLLAMA_HOST)
+    resp = oll.chat(
+        model=CHAT_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": build_prompt(hosts)},
+        ],
+        options={"temperature": 0.2, "num_ctx": 8192},
+        format="json",
+    )
+    raw = resp["message"]["content"]
+
+    try:
+        items = extract_json_array(raw)
+    except (ValueError, json.JSONDecodeError) as e:
+        console.print(f"[red]model returned unparseable output: {e}[/red]")
+        console.print(raw)
+        raise typer.Exit(code=1)
+
+    ranked = sorted(validate(items, hosts), key=lambda r: r["score"], reverse=True)
+
+    table = Table(title=f"Triage — {xml.name}")
+    table.add_column("Rank", style="dim")
+    table.add_column("IP")
+    table.add_column("Score", justify="right")
+    table.add_column("Top Vector")
+    table.add_column("Rationale")
+    for i, r in enumerate(ranked, 1):
+        top = r["vectors"][0]["technique"] if r["vectors"] else "-"
+        table.add_row(str(i), r["ip"], str(r["score"]), top, r["rationale"])
+    console.print(table)
+
+    doc = {"source": str(xml), "hosts": [asdict(h) for h in hosts], "ranked": ranked}
+    text = json.dumps(doc, indent=2, default=lambda o: asdict(o) if hasattr(o, "__dict__") else str(o))
+    if output:
+        output.write_text(text)
+        console.print(f"[green]wrote {output}[/green]")
+    else:
+        print(text)
+
+
+if __name__ == "__main__":
+    app()
+
+Run it:
+cd ~/pentest-tools/recon-triage
+python triage.py samples/scan.xml --out samples/scan.ranked.json
+
+Expected table (scores will vary):
+                 Triage — scan.xml
+┏━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Rank ┃ IP         ┃ Score ┃ Top Vector     ┃ Rationale              ┃
+┡━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ 1    │ 10.10.10.5 │ 92    │ Kerberoasting  │ Likely domain controller│
+│ 2    │ 10.10.10.10│ 78    │ Apache CVE     │ Apache 2.4.49 → CVE-...│
+│ 3    │ 10.10.10.20│ 25    │ Printer NTLM   │ HP JetDirect + IPP     │
+└──────┴────────────┴───────┴────────────────┴────────────────────────┘
+5.4 Stretch goals
+
+    Add a --per-host mode that fans out one LLM call per host in a ThreadPoolExecutor. This helps on huge scans where the batch prompt blows past num_ctx.
+    Add a Nessus .nessus XML parser so you can rank Nessus scans with the same tool.
+    Feed the ranked JSON into pentest-assistant from Challenge 1 to auto-generate a plan-of-attack markdown per top-N host.
+
+6. Challenge 4 — AI-Drafted Finding Writer
+6.1 Requirements
+
+Build finding-writer, a tool that reads a raw finding YAML and drafts a full Markdown finding card. It must:
+
+    Accept a YAML file describing a raw finding: title, target, severity, evidence (multiline), optional cvss, optional references.
+    Call the Claude Sonnet 5 API (claude-sonnet-5-20260101) with a structured system prompt that requires the sections Executive Summary, Technical Details, Impact, Remediation, References.
+    On any API failure (missing key, network error, HTTP error, rate limit), fall back to the local llama3.1:8b model with the same prompt.
+    Never crash on model output — accept whatever markdown comes back, but sanity check that the four required sections are present. If any are missing, ask the primary model once more with an "add the missing sections" nudge, and if that fails, print a warning and emit what you have.
+    Write the output to outputs/<slug>-<timestamp>.md and print the path.
+
+Deliverables: write_finding.py, one sample YAML under samples/. Target around 180 lines of Python.
+6.2 Sample finding YAML
+
+~/pentest-tools/finding-writer/samples/idor-order-history.yaml:
+title: "IDOR in /api/v1/orders/{id} — order history disclosure"
+target: "https://shop.example.com"
+severity: "High"
+cvss: "8.6 (AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:N/A:N)"
+evidence: |
+  Authenticated as user acct-1001 (Bearer eyJhbGci...). Direct GET of
+  /api/v1/orders/1002 (belonging to acct-1002) returns the full order payload,
+  including PII (name, shipping address, last-4 of PAN) and the order line items.
+  Server does not check ownership; any authenticated user can enumerate integer
+  order IDs and pull other customers' order history.
+  Sample response:
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+      {"id":1002,"user_id":1002,"name":"Grace Hopper","address":"...","total":149.99}
+  Enumerated the range 1000..1050; 43/51 IDs returned order data belonging to
+  other accounts. No rate limit observed.
+references:
+  - "OWASP API Security Top 10 — API1:2023 Broken Object Level Authorization"
+  - "https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/"
+6.3 write_finding.py
+
+~/pentest-tools/finding-writer/write_finding.py:
+#!/usr/bin/env python3
+"""finding-writer — draft a full Markdown finding card from a raw YAML.
+
+Primary: Claude Sonnet 5 via the Anthropic API.
+Fallback: local llama3.1:8b via Ollama.
+
+The tool never crashes on model failure. If the primary API is unreachable it
+retries once through Ollama with the same prompt. If the drafted markdown is
+missing any required section it asks once for a follow-up patch. Whatever
+finally comes out is written to outputs/<slug>-<ts>.md and its path printed.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import ollama
+import typer
+import yaml
+from rich.console import Console
+
+console = Console()
+app = typer.Typer(add_completion=False, help="AI-drafted finding writer.")
+
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-20260101")
+OLLAMA_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "llama3.1:8b")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+REQUIRED = ("## Executive Summary", "## Technical Details", "## Impact", "## Remediation", "## References")
+
+SYSTEM = """You are a senior penetration tester writing a formal finding card
+for a client-facing report. Given a raw finding description, produce a
+polished Markdown document with these exact top-level sections in this order:
+
+    # <finding title>
+
+    **Target:** ...
+    **Severity:** ...
+    **CVSS:** ...
+
+    ## Executive Summary
+    Two or three sentences a non-technical stakeholder can act on. State the
+    business risk in plain language.
+
+    ## Technical Details
+    A precise description of the vulnerability, the reproduction steps, and
+    the evidence. Preserve all IDs, URLs, and payloads from the raw evidence
+    verbatim. Use fenced code blocks for HTTP requests and responses.
+
+    ## Impact
+    What an attacker can do with this. Tie it to the CIA triad and to any
+    regulated data (PII, PCI, PHI). Include a realistic worst case.
+
+    ## Remediation
+    Ordered, concrete steps engineering can follow. Prefer specific control
+    names ("enforce object-level authorization in the OrdersController")
+    over generic advice ("validate input"). Include short-term mitigations
+    if the full fix is not immediate.
+
+    ## References
+    A markdown bullet list. Include every reference from the input plus any
+    additional standard sources (OWASP, CWE, NIST) that are directly relevant.
+
+Never invent evidence, IDs, HTTP responses, or customer names that are not in
+the input. Never speculate about the client's identity. Keep the tone neutral,
+factual, and audit-ready.
+"""
+
+
+def slugify(text: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s[:60] or "finding"
+
+
+def build_user_prompt(raw: dict) -> str:
+    parts = [
+        f"Title: {raw.get('title', '(missing)')}",
+        f"Target: {raw.get('target', '(missing)')}",
+        f"Severity: {raw.get('severity', '(unspecified)')}",
+    ]
+    if raw.get("cvss"):
+        parts.append(f"CVSS: {raw['cvss']}")
+    parts.append("\nRaw evidence:\n" + str(raw.get("evidence", "")).rstrip())
+    if raw.get("references"):
+        parts.append("\nProvided references:")
+        for r in raw["references"]:
+            parts.append(f"- {r}")
+    parts.append("\nDraft the finding card as instructed.")
+    return "\n".join(parts)
+
+
+def try_anthropic(user_prompt: str) -> str:
+    try:
+        import anthropic  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(f"anthropic sdk missing: {e}") from e
+
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set")
+
+    client = anthropic.Anthropic(api_key=key)
+    resp = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=2048,
+        system=SYSTEM,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    return "".join(block.text for block in resp.content if getattr(block, "type", "") == "text")
+
+
+def try_ollama(user_prompt: str) -> str:
+    oll = ollama.Client(host=OLLAMA_HOST)
+    resp = oll.chat(
+        model=OLLAMA_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": user_prompt},
+        ],
+        options={"temperature": 0.3, "num_ctx": 8192},
+    )
+    return resp["message"]["content"]
+
+
+def draft(user_prompt: str) -> tuple[str, str]:
+    """Return (markdown, model_id_used)."""
+    try:
+        md = try_anthropic(user_prompt)
+        return md, ANTHROPIC_MODEL
+    except Exception as e:
+        console.print(f"[yellow]anthropic path failed: {e} — falling back to ollama[/yellow]")
+        try:
+            md = try_ollama(user_prompt)
+            return md, OLLAMA_MODEL
+        except Exception as ee:
+            console.print(f"[red]ollama fallback also failed: {ee}[/red]")
+            raise
+
+
+def missing_sections(md: str) -> list[str]:
+    return [s for s in REQUIRED if s not in md]
+
+
+def patch_missing(md: str, missing: list[str], user_prompt: str) -> str:
+    nudge = (
+        "Your previous draft is missing these required sections: "
+        + ", ".join(missing)
+        + ". Rewrite the full document with every required section present. "
+        + "Preserve everything you already wrote correctly."
+    )
+    full = user_prompt + "\n\nPrevious draft:\n" + md + "\n\n" + nudge
+    try:
+        return try_anthropic(full)
+    except Exception:
+        return try_ollama(full)
+
+
+@app.command()
+def main(
+    yaml_path: Path = typer.Argument(..., exists=True, readable=True),
+    out_dir: Path = typer.Option(Path("outputs"), "--out", help="Output directory."),
+) -> None:
+    raw = yaml.safe_load(yaml_path.read_text())
+    if not isinstance(raw, dict) or "title" not in raw:
+        console.print("[red]YAML must be a mapping with at least a 'title' key[/red]")
+        raise typer.Exit(code=2)
+
+    user_prompt = build_user_prompt(raw)
+    md, used = draft(user_prompt)
+
+    missing = missing_sections(md)
+    if missing:
+        console.print(f"[yellow]missing sections: {missing} — requesting patch[/yellow]")
+        try:
+            md = patch_missing(md, missing, user_prompt)
+        except Exception as e:
+            console.print(f"[red]patch attempt failed: {e}[/red]")
+        missing = missing_sections(md)
+        if missing:
+            console.print(f"[red]final draft still missing: {missing}[/red]")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_path = out_dir / f"{slugify(raw['title'])}-{ts}.md"
+    out_path.write_text(md.rstrip() + "\n")
+
+    console.print(f"[green]wrote {out_path}[/green]  [dim](model: {used})[/dim]")
+
+
+if __name__ == "__main__":
+    app()
+
+Try it end-to-end. First with the API available:
+cd ~/pentest-tools/finding-writer
+python write_finding.py samples/idor-order-history.yaml
+# → wrote outputs/idor-in-api-v1-orders-id-order-history-disclosure-...md  (model: claude-sonnet-5-...)
+
+Then simulate the API being unavailable to prove the fallback:
+env -u ANTHROPIC_API_KEY python write_finding.py samples/idor-order-history.yaml
+# → anthropic path failed: ANTHROPIC_API_KEY not set — falling back to ollama
+# → wrote outputs/idor-in-api-v1-orders-id-order-history-disclosure-...md  (model: llama3.1:8b)
+
+Open the resulting markdown and spot-check that the five required sections are present and that the evidence block is preserved verbatim (no invented HTTP responses).
+6.4 Stretch goals
+
+    Add a --batch mode that walks a directory of YAML files and produces one aggregate report.md with a table of contents.
+    Add a --json output alongside the markdown that carries structured fields (CWE ID, ATT&CK IDs, likelihood, exploitability) for consumption by a defect-tracker importer.
+    Add a small evaluator that scores each drafted finding against a rubric (5 x 1-5 dimensions) using a second LLM call, and refuses to accept drafts below a threshold — a self-hosted "reviewer" loop.
+
+7. Independent Challenges
+
+These are open-ended. No reference implementation is provided — that is the point. Pick one at minimum; the ambitious student picks all three. Deliverables go into your ~/pentest-tools/ repo under stretch/ and are graded on the rubric below.
+7.1 Fine-tune a LoRA adapter with Unsloth
+
+Assemble a small dataset (100-500 examples) of (pentest_question, ideal_answer) pairs — mine them from your own notes, from HackTricks, from your CTF write-ups. Use Unsloth to LoRA-fine-tune llama3.1:8b on the dataset in a Colab or a local GPU box. Export the resulting adapter, merge it into a GGUF, and package it as an Ollama Modelfile called pentest-assistant-tuned. Compare its output on the three probes from Challenge 1 against the untuned assistant. Document what improved and what regressed.
+
+Grading emphasizes: dataset quality, honest evaluation (including regressions), and reproducibility of the training run.
+7.2 Wrap a scanner as an MCP server
+
+Pick a familiar scanner — nmap, nikto, gobuster, nuclei, your own portscan.py from Module 03. Wrap it as a Model Context Protocol server exposing at least three tools (e.g. start_scan, get_status, get_results) and one resource (the raw scan output). Use the reference MCP Python SDK. Prove it works by connecting it to claude (or another MCP client) and driving a scan end-to-end.
+
+Grading emphasizes: schema quality (well-typed tool signatures), correct handling of long-running scans (jobs, not blocking calls), and safety (refusing scans of localhost or of unspecified targets).
+7.3 Streamlit UI for the finding writer
+
+Wrap the Challenge 4 tool in a Streamlit UI. The user should be able to: paste a raw finding, select a severity, click "Draft", see the drafted markdown side-by-side with the raw input, edit it inline, and download the final .md. The page must show which model produced the draft (Claude Sonnet 5 vs local fallback) and expose a "regenerate" button.
+
+Grading emphasizes: usability under real conditions (no keyboard-only paths, no un-copyable output), graceful degradation when the API is unreachable, and secret hygiene (no API key in the URL or on-page).
+8. Grading Rubric
+
+Each challenge is graded out of 20 points. Total lab: 100 points across the four required challenges (Challenge 1-4) plus up to 20 bonus points for one completed independent challenge from section 7.
+Dimension	5 pts (excellent)	3 pts (adequate)	1 pt (weak)
+Correctness	Runs against the sample inputs on Kali 2026 with no edits	Runs with minor tweaks (env var, path)	Fails without hand-holding
+Prompt design	System prompt sharp, few-shot present, constraints explicit	Adequate persona and format	Vague or missing system prompt
+Robustness & fallback	Handles model errors, network errors, malformed output	Handles common errors	Crashes on the first surprise
+Security discipline	No key in code, refuses out-of-scope, preserves evidence verbatim	Minor lapses	Keys committed, invents evidence
+
+Per challenge:
+
+    Challenge 1 — pentest-assistant: 20 points. Modelfile correctness (5), system prompt quality (5), few-shot appropriateness (5), test harness passes (5).
+    Challenge 2 — ragq: 20 points. Corpus completeness (4), embedding pipeline (4), retrieval quality (4), citation of sources (4), refusal on out-of-corpus questions (4).
+    Challenge 3 — recon-triage: 20 points. Nmap XML parsing (4), prompt structure (4), JSON schema validation (4), sort and rich table (4), robustness on malformed model output (4).
+    Challenge 4 — finding-writer: 20 points. Claude Sonnet 5 primary path (4), Ollama fallback path (4), section validation and self-patching (4), evidence preservation (4), output file hygiene (4).
+    Independent challenge (bonus): up to 20 points. Judged on scope, quality, and honest documentation of limitations.
+
+Deductions apply for:
+
+    Any commit that contains an API key (-20, immediate).
+    Any tool that scans, probes, or attacks a target the operator has not explicitly named (-10).
+    Any invented CVE number, ATT&CK ID, or evidence artifact in the finding writer output (-5 per instance).
+
+9. Submitting Your Work
+
+Every tool goes into your personal ~/pentest-tools/ git repo. Structure and hygiene matter — a grader who cannot find your files gives you the score they can prove.
+9.1 Repo layout
+~/pentest-tools/
+├── .gitignore
+├── requirements.txt
+├── README.md                          # short: what each tool does, how to run it
+├── pentest-assistant/
+│   ├── Modelfile
+│   └── test_assistant.py
+├── ragq/
+│   ├── corpus/
+│   ├── index.py
+│   └── ragq.py
+├── recon-triage/
+│   ├── triage.py
+│   └── samples/scan.xml
+├── finding-writer/
+│   ├── write_finding.py
+│   └── samples/idor-order-history.yaml
+└── stretch/                           # optional; independent challenges
+    ├── lora-tune/
+    ├── mcp-scanner/
+    └── streamlit-finding-writer/
+9.2 Commit hygiene
+
+Small, atomic commits with meaningful messages. One challenge per commit at minimum:
+cd ~/pentest-tools
+
+git add pentest-assistant/
+git commit -m "feat(pentest-assistant): Modelfile + smoke test for llama3.1:8b build"
+
+git add ragq/
+git commit -m "feat(ragq): OWASP+CVE RAG CLI over ChromaDB + local Ollama"
+
+git add recon-triage/
+git commit -m "feat(recon-triage): Nmap XML → ranked JSON via local LLM"
+
+git add finding-writer/
+git commit -m "feat(finding-writer): Claude Sonnet 5 → Ollama fallback finding drafter"
+9.3 Pre-submit checklist
+
+Run every one of these before you push, or the grader will run them for you and take points:
+cd ~/pentest-tools
+source .venv/bin/activate
+
+# 1. No secrets committed.
+git ls-files | xargs grep -EIn 'sk-ant-|AKIA[0-9A-Z]{16}|BEGIN PRIVATE KEY' && echo "SECRETS FOUND" || echo "clean"
+
+# 2. Every Python entry point runs --help without traceback.
+python ragq/ragq.py --help
+python recon-triage/triage.py --help
+python finding-writer/write_finding.py --help
+
+# 3. Challenge 1 smoke test passes.
+python pentest-assistant/test_assistant.py
+
+# 4. Challenge 2 end-to-end.
+python ragq/index.py
+python ragq/ragq.py ask "Which OWASP category covers Log4Shell?"
+
+# 5. Challenge 3 end-to-end on the sample.
+python recon-triage/triage.py recon-triage/samples/scan.xml --out /tmp/rt.json
+jq '.ranked | length' /tmp/rt.json
+
+# 6. Challenge 4 end-to-end (both paths).
+python finding-writer/write_finding.py finding-writer/samples/idor-order-history.yaml
+env -u ANTHROPIC_API_KEY python finding-writer/write_finding.py finding-writer/samples/idor-order-history.yaml
+9.4 Push and open the PR
+git remote add origin git@gitlab.rtl.internal:students/<your-handle>/pentest-tools.git
+git push -u origin main
+
+# Or, for the internal Gitea instance the course runs on:
+git remote add course git@gitea.rtl.internal:module05/<your-handle>.git
+git push -u course main
+
+Open a merge request against the course-provided grading branch and paste the output of the pre-submit checklist into the MR description. The grader will pull, replay, and score.
+10. Summary and Pointer to Module 06
+
+You just built four tools that together represent a full AI-augmented offensive-security stack:
+
+    A specialized local model you can query offline without leaking client data.
+    A retrieval layer that grounds the model in a KB you control, with citations.
+    An input-parsing agent that turns unstructured scan output into ranked, structured intelligence.
+    A drafting agent that turns raw findings into audit-ready client deliverables, with the cloud-model quality of Claude Sonnet 5 as the primary path and a fully local fallback for when the network or the budget disappears.
+
+Every one of these tools shows up again in the rest of the course. Module 06 (AI-Augmented Reconnaissance) picks up right where Challenge 3 leaves off: you will chain recon-triage behind an automated Nmap pipeline, add Shodan and CT-log enrichment as new tool sources for the same model, and start driving the whole thing from pentest-assistant. Module 09 (Exploitation with AI Assist) reuses ragq as the memory layer that lets the model recall exploit primitives you have used before. Module 12 (AI-Augmented Reporting) reuses finding-writer as the core of your report-generation pipeline.
+
+Two habits to carry forward:
+
+    Prompts are code. Version them, test them, and treat drift in them like drift in any other library dependency. The finding-writer system prompt is the difference between a report your client will pay for and a report your engagement manager will send back.
+    Local first, cloud when it helps. Client data belongs on your box. Reach for the API when the marginal quality gain justifies sending the data, and never before. Every one of the tools you just built defaults to local for a reason.
+
+Snapshot the VM. Push the repo. Take a break. Module 06 waits with your first live recon target.

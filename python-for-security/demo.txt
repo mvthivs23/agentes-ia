@@ -1,0 +1,2165 @@
+Lesson 01 — Python Environment and Language Fundamentals
+
+Off-the-shelf tools cover most of the ground on a modern engagement, but the last twenty percent — the endpoint no scanner understands, the exploit no one has weaponized yet, the payload that must fit a specific WAF or filter — always comes down to code. Python gives you iteration speed and a rich ecosystem; C gives you the systems-level control that shellcode, kernels, and exploit primitives require.
+
+This module teaches both languages side by side because they solve complementary problems and because reading them well is a prerequisite for reading advisories, gadgets, and CTF write-ups. You will finish the module able to write multi-threaded scanners and web fuzzers in Python and buffer overflow, format string, and shellcode-loading programs in C — from scratch, with no framework hand-holding. Everything you build here becomes a permanent part of your toolkit and gets used again in later modules.
+
+C compilation pipeline vs the Python runtime model — the two engines a pentester alternates between every week.
+
+C compilation pipeline vs the Python runtime model — the two engines a pentester alternates between every week.
+
+    Module 03: Programming — Python and C · Penetration Testing with Kali Linux 1.0 · Red Team Leaders
+
+Introduction
+
+Python is the working language of offensive security. From socket-level exploits to sprawling C2 frameworks, from a five-line port sweeper to Impacket's 200,000+ line Active Directory arsenal, Python is what pentesters reach for when a specific tool does not yet exist. It is fast enough to weaponize, expressive enough to prototype in minutes, and its standard library alone contains almost every primitive an attacker needs — sockets, subprocess execution, cryptographic hashing, HTTP clients, regular expressions, and thread pools.
+
+This lesson establishes the Python foundation the rest of this module builds on. You will install a modern Python 3.12+ interpreter on Kali Linux 2026, learn to isolate project dependencies with virtual environments, master the core language features that show up in every pentesting script, and finish by building a real HTTP header enumerator with nothing but the standard library.
+
+Python 3.12 and 3.13 brought significant improvements that matter for offensive work. The interpreter is faster (PEP 659 specializing adaptive interpreter), error messages are dramatically better (fine-grained tracebacks pinpoint the exact expression that failed), typing is more expressive (type statement, generic parameter syntax), and the perf profiler integration gives you real CPU-level insight into slow scans. If you last touched Python on 3.8 or 3.9, everything is faster and more ergonomic now.
+
+By the end of this lesson you will be able to bootstrap a clean Python project, write idiomatic code that other operators can read, and produce a small tool that does real reconnaissance work.
+1. Why Python for Pentesters
+
+Python's dominance in offensive security is not an accident. Four factors keep it on top.
+1.1 The Ecosystem
+
+The Python Package Index (PyPI) hosts more than 500,000 packages. For nearly any pentesting task, someone has already written the primitive you need:
+Task	Library	What It Does
+Raw packet crafting	scapy	Build, send, sniff, and dissect packets
+HTTP requests	requests, httpx	Clean HTTP client with sessions and TLS control
+Active Directory	impacket	SMB, Kerberos, NTLM, DCE/RPC, LDAP
+Web crawling	beautifulsoup4, playwright	HTML parsing and headless browser control
+Fuzzing	boofuzz, atheris	Protocol fuzzing and coverage-guided fuzzing
+Cryptography	cryptography, pycryptodome	Modern cryptographic primitives
+Exploit dev helpers	pwntools	CTF-style binary exploitation toolkit
+Windows COM/WMI	pywin32, impacket	Windows post-exploitation
+1.2 Speed of Iteration
+
+Between a fresh idea and a running proof of concept, Python compresses the gap to minutes. There is no compile step, no build system to negotiate, and the REPL means you can prototype any protocol interaction interactively before wrapping it in a script.
+1.3 Cross-Platform Reach
+
+The same Python script runs on Kali, on a compromised Windows host with Python installed, on a macOS red-team laptop, and on an embedded Linux target with Python 3 present. This is why so many post-exploitation frameworks — Empire, Covenant helpers, Sliver's beacon scripting — either use Python or emit Python.
+1.4 Reading Other People's Tools
+
+Almost every open-source security tool worth reading is either Python or has a Python interface. If you cannot read Python fluently, half of the offensive tooling universe is opaque to you.
+
+    Pentester Insight: Rust and Go are gaining ground for stealth implants (smaller binaries, harder for defenders to reverse), but Python remains the language of reconnaissance, scripting, and glue code between tools. Learn Python first, then add a systems language when you need one.
+
+2. Installing Python 3.12+ on Kali 2026
+
+Kali 2026 ships with Python 3.12 as the default python3. Verify what you have before installing anything new.
+2.1 Checking the System Python
+# Check the default interpreter version:
+python3 --version
+# Python 3.12.7
+
+# Full path and confirm it is the Kali package:
+which python3
+# /usr/bin/python3
+
+dpkg -S /usr/bin/python3
+# python3-minimal: /usr/bin/python3
+
+# See every Python interpreter installed on the system:
+ls /usr/bin/python*
+# /usr/bin/python3  /usr/bin/python3.12
+2.2 Installing Additional Interpreters with apt
+
+Kali's package manager ships current interpreters signed by the distribution. This is the safest way to add or update Python.
+# Update the package cache first:
+sudo apt update
+
+# Install Python 3.13 alongside 3.12 (available in Kali 2026 backports):
+sudo apt install python3.13 python3.13-venv python3.13-dev
+
+# Verify:
+python3.13 --version
+# Python 3.13.1
+
+# The default python3 is unchanged — this matters, do not alter it:
+python3 --version
+# Python 3.12.7
+
+Never remove or symlink over /usr/bin/python3. Dozens of Kali tools have #!/usr/bin/env python3 shebangs and will break if the default interpreter version changes underneath them.
+2.3 Installing Multiple Versions with pyenv
+
+For pentesters who target legacy environments or need to reproduce an exact interpreter version, pyenv compiles and manages side-by-side installations without touching the system Python.
+# Install build dependencies:
+sudo apt install -y make build-essential libssl-dev zlib1g-dev libbz2-dev \
+  libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev \
+  xz-utils tk-dev libffi-dev liblzma-dev
+
+# Install pyenv:
+curl https://pyenv.run | bash
+
+# Add pyenv to your shell — append to ~/.zshrc or ~/.bashrc:
+cat >> ~/.zshrc <<'EOF'
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+EOF
+
+# Reload the shell:
+exec zsh
+
+# List available versions:
+pyenv install --list | grep " 3.1[23]"
+
+# Install Python 3.12.7 and 3.13.1:
+pyenv install 3.12.7
+pyenv install 3.13.1
+
+# Pin a version per-directory for a specific engagement:
+cd ~/engagements/acme-corp
+pyenv local 3.13.1
+python --version
+# Python 3.13.1
+
+    Pentester Insight: Some client environments still run Python 2.7 or 3.6. If you write a tool that must run on the target host after landing on it, pin your development environment to that older version with pyenv so you catch incompatible syntax during development rather than in the middle of an engagement.
+
+2.4 Confirming pip Is Installed
+python3 -m pip --version
+# pip 24.3.1 from /usr/lib/python3/dist-packages/pip (python 3.12)
+
+# If missing, install it:
+sudo apt install python3-pip
+3. Virtual Environments
+
+Every serious Python project runs inside a virtual environment. This is not optional. Global pip install in Kali 2026 is blocked by default (PEP 668 marks the system Python as externally managed) and will refuse with error: externally-managed-environment. Even if you force it with --break-system-packages, you will eventually create dependency conflicts between tools.
+3.1 The Built-In venv
+
+venv ships with Python. It is the boring, reliable choice.
+# Create a project directory:
+mkdir -p ~/tools/recon-scanner
+cd ~/tools/recon-scanner
+
+# Create a virtual environment named .venv:
+python3 -m venv .venv
+
+# Activate it:
+source .venv/bin/activate
+
+# Your prompt now shows (.venv):
+# (.venv) kali@kali:~/tools/recon-scanner$
+
+# Verify the interpreter is the venv one:
+which python
+# /home/kali/tools/recon-scanner/.venv/bin/python
+
+# Install a package — no sudo, no --break-system-packages:
+pip install requests
+
+# Deactivate when done:
+deactivate
+
+Always add .venv/ to .gitignore. Virtual environments contain hard-coded absolute paths and must not be checked into version control.
+3.2 pipx for Standalone CLI Tools
+
+Some tools — impacket, sqlmap, bloodyAD — you want as commands on your PATH, not as project dependencies. pipx installs each tool in its own isolated venv and exposes just the entry points.
+# Install pipx via apt (recommended on Kali):
+sudo apt install pipx
+pipx ensurepath
+
+# Install a tool globally without polluting anything:
+pipx install impacket
+
+# Now use it from anywhere:
+GetUserSPNs.py -h
+
+# List everything pipx has installed:
+pipx list
+
+# Upgrade all pipx-managed tools:
+pipx upgrade-all
+3.3 uv — The Fast Modern Alternative
+
+uv is a Rust-written Python package and project manager from Astral (the same team behind ruff). It is 10-100x faster than pip and combines the roles of pip, venv, pip-tools, and pyenv into one binary. For pentesters juggling many small tool projects, it is the fastest workflow available in 2026.
+# Install uv:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Or via pipx:
+pipx install uv
+
+uv --version
+# uv 0.5.11
+
+# Bootstrap a new project — this creates pyproject.toml, .python-version, .venv, and a README:
+uv init recon-scanner
+cd recon-scanner
+
+# Add a dependency (creates the venv on first call):
+uv add requests
+
+# Add a dev-only dependency:
+uv add --dev pytest ruff mypy
+
+# Run a script inside the managed environment (no manual activation needed):
+uv run python scanner.py
+
+# Install a specific Python interpreter and pin the project to it:
+uv python install 3.13
+uv python pin 3.13
+
+# Sync the lockfile — reproducible installs across machines:
+uv sync
+
+The single most useful uv feature for pentesters is uv run --script, which reads inline dependency metadata from a script's header (PEP 723) and creates an ephemeral environment on the fly:
+# save as quick_probe.py
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["httpx"]
+# ///
+import httpx
+print(httpx.get("https://example.com").status_code) uv run --script quick_probe.py
+# 200
+
+No manual venv, no pip install, no leftover state.
+4. Package Management
+4.1 pip Basics
+# Install one package:
+pip install requests
+
+# Install a specific version:
+pip install "requests==2.31.0"
+
+# Install a version range:
+pip install "requests>=2.28,<3.0"
+
+# Upgrade:
+pip install --upgrade requests
+
+# List installed packages:
+pip list
+
+# Show details for one package:
+pip show requests
+
+# Uninstall:
+pip uninstall requests
+4.2 requirements.txt
+
+The classic way to record dependencies. A plain text file, one package per line.
+# requirements.txt
+requests==2.32.3
+beautifulsoup4==4.12.3
+dnspython==2.7.0
+colorama==0.4.6 # Install everything at once:
+pip install -r requirements.txt
+
+# Freeze the currently installed set to a file:
+pip freeze > requirements.txt
+
+pip freeze records every transitive dependency with an exact version. That is good for reproducibility but noisy — for a tool you distribute, prefer a hand-curated requirements.txt with only your direct dependencies.
+4.3 pyproject.toml — The Modern Standard
+
+PEP 621 standardized project metadata in pyproject.toml. Both pip and uv understand it, and it replaces setup.py, setup.cfg, and often requirements.txt.
+# pyproject.toml
+[project
+]
+name = "recon-scanner"
+version = "0.1.0"
+description = "Fast reconnaissance scanner"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32",
+    "dnspython>=2.7",
+]
+
+[project.optional-dependencies
+]
+dev = ["pytest", "ruff", "mypy"]
+
+[project.scripts
+]
+recon-scan = "recon_scanner.cli:main"
+
+[build-system
+]
+requires = ["hatchling"]
+build-backend = "hatchling.build" # Install the project in editable mode — code changes take effect without reinstall:
+pip install -e .
+
+# Install with dev dependencies:
+pip install -e ".[dev]"
+
+# With uv, this becomes:
+uv sync --all-extras
+5. Data Types Deep Dive
+
+Every Python value has a type, and picking the right one is often the difference between clean code and a mess of conversions. This section covers each core type through a pentester's lens.
+5.1 int
+
+Python integers are arbitrary precision — they never overflow. This matters when you compute hashes, factor keys, or work with large offsets.
+port = 8080
+timeout_ms = 5_000            # Underscores as thousands separators (readable, ignored by parser)
+big = 2 ** 4096                # No overflow, ever
+print(big.bit_length())        # 4097
+
+# Base conversions — everywhere in pentesting:
+hex(255)                       # '0xff'
+bin(0b1010_1010)               # '0b10101010'
+int("deadbeef", 16)            # 3735928559
+int("0b1101", 2)               # 13
+5.2 float
+
+64-bit IEEE 754. Fine for timings and delays, wrong for money or exact comparisons.
+timeout = 2.5
+import time
+start = time.perf_counter()
+# ... work ...
+elapsed = time.perf_counter() - start
+print(f"took {elapsed:.3f}s")
+5.3 str
+
+Text. Immutable, always Unicode in Python 3.
+banner = "SSH-2.0-OpenSSH_9.6p1"
+banner.startswith("SSH-2.0")         # True
+banner.split("-")[2]                  # 'OpenSSH_9.6p1'
+banner.upper()                        # 'SSH-2.0-OPENSSH_9.6P1'
+
+# f-strings — the modern formatting choice:
+target = "10.10.10.50"
+port = 22
+print(f"connecting to {target}:{port}")     # connecting to 10.10.10.50:22
+
+# f-string debugging shortcut (3.8+):
+print(f"{port=}")                            # port=22
+
+# Raw strings for regex or Windows paths:
+pattern = r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+5.4 bytes
+
+Raw binary data. Everything that comes off a socket, out of a file opened in binary mode, or through a subprocess pipe is bytes, not str.
+# Bytes literal — the b prefix:
+payload = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+
+# From a hex string (useful for shellcode):
+shellcode = bytes.fromhex("31c050682f2f7368682f62696e89e3505389e199b00bcd80")
+print(len(shellcode))                # 24
+
+# Back to hex for display:
+shellcode.hex()                      # '31c050682f2f7368682f62696e89e3505389e199b00bcd80'
+
+# Bytes to str — decode with an explicit encoding:
+raw = b"admin:hunter2"
+raw.decode("utf-8")                  # 'admin:hunter2'
+
+# str to bytes — always specify encoding:
+"admin:hunter2".encode("utf-8")      # b'admin:hunter2'
+
+Pentester example — reading from a socket returns bytes:
+import socket
+s = socket.socket()
+s.settimeout(3)
+s.connect(("example.com", 80))
+s.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+response = s.recv(4096)              # response is bytes, not str
+s.close()
+
+# The first line of an HTTP response is ASCII-safe, so decoding is fine:
+first_line = response.split(b"\r\n")[0].decode("ascii")
+print(first_line)                    # HTTP/1.1 200 OK
+
+Never call .decode() on arbitrary network data without a try/except — a malformed byte can raise UnicodeDecodeError and crash your scanner mid-loop.
+5.5 list
+
+Ordered, mutable, indexable. The all-purpose Python collection.
+targets = ["10.10.10.1", "10.10.10.2", "10.10.10.3"]
+targets.append("10.10.10.4")
+targets[0]                           # '10.10.10.1'
+targets[-1]                          # '10.10.10.4'
+targets[1:3]                         # ['10.10.10.2', '10.10.10.3']
+len(targets)                         # 4
+
+# In-place sort vs new sorted list:
+ports = [443, 22, 80, 8080]
+ports.sort()                         # ports is now [22, 80, 443, 8080]
+new_list = sorted([443, 22, 80])     # returns [22, 80, 443], original unchanged
+5.6 tuple
+
+Ordered, immutable. Use when the collection's identity matters — coordinates, address pairs, dictionary keys.
+target = ("10.10.10.50", 22)         # (host, port) pair
+host, port = target                   # Tuple unpacking
+
+# A common pentesting pattern — list of (host, port) targets:
+scan_queue = [
+    ("10.10.10.1", 22),
+    ("10.10.10.1", 80),
+    ("10.10.10.1", 443),
+]
+
+Tuples are hashable if all their elements are, so they can be dictionary keys or set members. Lists cannot.
+5.7 dict
+
+Key-value map. Ordered since Python 3.7. The workhorse of structured data.
+host = {
+    "ip": "10.10.10.50",
+    "hostname": "dc01.corp.local",
+    "os": "Windows Server 2022",
+    "open_ports": [88, 135, 389, 445, 636, 3389],
+}
+
+host["ip"]                            # '10.10.10.50'
+host.get("mac", "unknown")            # 'unknown' — safe default, no KeyError
+
+# Iterate keys, values, items:
+for port in host["open_ports"]:
+    print(port)
+
+for key, value in host.items():
+    print(f"{key} = {value}")
+
+# Merge dicts (3.9+ syntax):
+enriched = host | {"ttl": 128, "confidence": "high"}
+5.8 set
+
+Unordered collection of unique, hashable elements. O(1) membership tests.
+# Deduplicate a subdomain list from multiple sources:
+from_crt_sh = {"www.acme.com", "mail.acme.com", "vpn.acme.com"}
+from_dns_brute = {"vpn.acme.com", "dev.acme.com", "staging.acme.com"}
+
+all_subs = from_crt_sh | from_dns_brute       # union
+overlap = from_crt_sh & from_dns_brute        # intersection
+only_brute = from_dns_brute - from_crt_sh     # difference
+
+# Fast membership test — this is O(1) vs a list's O(n):
+if "vpn.acme.com" in all_subs:
+    print("known target")
+
+    Pentester Insight: When deduplicating a wordlist or a subdomain enumeration result, always pipe it through a set. On a 10-million-line wordlist, set() finishes in seconds while a naive if x not in seen: seen.append(x) loop takes hours.
+
+6. Control Flow
+6.1 if / elif / else
+status_code = 401
+
+if status_code == 200:
+    print("OK")
+elif status_code in (301, 302, 307, 308):
+    print("redirect")
+elif status_code == 401:
+    print("auth required")
+elif 400 <= status_code < 500:
+    print("client error")
+elif 500 <= status_code < 600:
+    print("server error")
+else:
+    print("unknown")
+6.2 while
+import socket
+attempts = 0
+while attempts < 3:
+    try:
+        s = socket.create_connection(("10.10.10.50", 22), timeout=2)
+        s.close()
+        print("open")
+        break
+    except OSError:
+        attempts += 1
+else:
+    # Runs only if the while loop completes without a break:
+    print("port closed or filtered after 3 attempts")
+6.3 for
+# Iterate a list of ports:
+for port in [22, 80, 443, 8080]:
+    print(f"scanning {port}")
+
+# range for numeric sequences:
+for port in range(1, 1025):
+    pass  # scan every well-known port
+
+# enumerate when you need the index:
+targets = ["host1", "host2", "host3"]
+for i, host in enumerate(targets, start=1):
+    print(f"{i}. {host}")
+
+# zip to walk two iterables in parallel:
+hosts = ["10.10.10.1", "10.10.10.2"]
+names = ["gateway", "dc01"]
+for ip, name in zip(hosts, names, strict=True):
+    print(f"{ip} = {name}")
+
+strict=True (3.10+) raises ValueError if the iterables are different lengths — catches bugs early.
+6.4 Comprehensions
+
+Comprehensions are compact loops that build a collection in one expression. They read faster than the equivalent for loop once you get used to them.
+# List comprehension — well-known ports:
+well_known = [p for p in range(1, 1025)]
+
+# With a filter:
+high_ports = [p for p in range(1, 65536) if p > 49152]
+
+# Transform and filter:
+banners = ["SSH-2.0-OpenSSH_9.6p1", "220 vsFTPd 3.0.5", "HTTP/1.1 200"]
+ssh_banners = [b.split("-")[2] for b in banners if b.startswith("SSH-")]
+# ['OpenSSH_9.6p1']
+
+# Dict comprehension — port to service map:
+services = {22: "ssh", 80: "http", 443: "https"}
+inverted = {name: port for port, name in services.items()}
+# {'ssh': 22, 'http': 80, 'https': 443}
+
+# Set comprehension — unique domains from a URL list:
+urls = ["https://a.com/1", "https://b.com/2", "https://a.com/3"]
+domains = {u.split("/")[2] for u in urls}
+# {'a.com', 'b.com'}
+6.5 The Walrus Operator
+
+:= assigns and returns a value in one expression. Especially useful in loops that read until exhausted.
+import socket
+s = socket.create_connection(("example.com", 80), timeout=3)
+s.sendall(b"GET / HTTP/1.0\r\n\r\n")
+
+# Read chunks until the socket closes — the walrus captures each chunk once:
+chunks = []
+while chunk := s.recv(4096):
+    chunks.append(chunk)
+s.close()
+response = b"".join(chunks)
+
+Without the walrus, you would need to call s.recv() twice per iteration or restructure the loop awkwardly.
+6.6 match / case
+
+Structural pattern matching, added in Python 3.10, is more powerful than a C switch. It matches types, shapes, and captures values.
+def classify_response(resp):
+    match resp:
+        case {"status": 200, "body": body}:
+            return f"OK, {len(body)} bytes"
+        case {"status": code} if 300 <= code < 400:
+            return f"redirect ({code})"
+        case {"status": 401 | 403}:
+            return "auth required"
+        case {"status": code} if code >= 500:
+            return f"server error ({code})"
+        case _:
+            return "unhandled"
+
+classify_response({"status": 401})            # 'auth required'
+classify_response({"status": 200, "body": b"hello"})  # 'OK, 5 bytes'
+
+The | operator matches multiple values in one arm; case _ is the default; guards (if code >= 500) add conditional matching.
+7. Functions
+7.1 Basics
+def is_open(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Return True if a TCP connection to host:port succeeds within timeout seconds."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+is_open("example.com", 80)                    # True
+is_open("example.com", 22, timeout=1.0)       # probably False
+7.2 *args and **kwargs
+
+*args collects extra positional arguments into a tuple; **kwargs collects extra keyword arguments into a dict.
+def scan(*ports, **options):
+    verbose = options.get("verbose", False)
+    for port in ports:
+        if verbose:
+            print(f"scanning {port}")
+
+scan(22, 80, 443, verbose=True)
+
+# Unpacking at the call site:
+port_list = [22, 80, 443]
+opts = {"verbose": True, "timeout": 3.0}
+scan(*port_list, **opts)
+7.3 Type Hints
+
+Type hints are documentation that tools can check. Runtime behavior is unchanged, but mypy and IDEs catch category errors before they run.
+def http_get(url: str, timeout: float = 5.0) -> str:
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+# 3.12+ generic function syntax:
+def first[T](items: list[T]) -> T | None:
+    return items[0] if items else None
+
+first([1, 2, 3])                              # 1
+first(["a", "b"])                             # 'a'
+first([])                                     # None
+
+Type hints do not enforce anything at runtime — they are for humans and tooling.
+7.4 lambda
+
+Anonymous single-expression functions. Best used as short callbacks.
+# Sort hosts by number of open ports:
+hosts = [
+    {"ip": "10.10.10.1", "open": [80]},
+    {"ip": "10.10.10.2", "open": [22, 80, 443, 3389]},
+    {"ip": "10.10.10.3", "open": [22, 443]},
+]
+hosts.sort(key=lambda h: len(h["open"]), reverse=True)
+
+If a lambda spans more than a line or gets a name, use def instead.
+7.5 Decorators
+
+A decorator wraps a function to add behavior — logging, timing, retries, rate limiting. For pentesting, timing every scan function is a common pattern.
+import time
+from functools import wraps
+
+def timed(func):
+    """Decorator that prints the wall-clock runtime of the wrapped function."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        try:
+            return func(*args, **kwargs)
+        finally:
+            elapsed = time.perf_counter() - start
+            print(f"[timed] {func.__name__} took {elapsed*1000:.1f} ms")
+    return wrapper
+
+@timed
+def sweep(subnet: str, ports: list[int]) -> list[tuple[str, int]]:
+    import socket, ipaddress
+    open_ports = []
+    for ip in ipaddress.ip_network(subnet).hosts():
+        for port in ports:
+            try:
+                with socket.create_connection((str(ip), port), timeout=0.3):
+                    open_ports.append((str(ip), port))
+            except OSError:
+                pass
+    return open_ports
+
+# Usage — the decorator prints the timing automatically:
+sweep("192.168.56.0/29", [22, 80, 443])
+# [timed] sweep took 1834.7 ms
+
+@wraps(func) preserves the wrapped function's name and docstring so tracebacks stay useful.
+7.6 Generators
+
+A generator function uses yield to produce values one at a time without materializing the full list in memory. Essential for large wordlists.
+def read_wordlist(path: str):
+    """Yield one line at a time — never loads the whole file into memory."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line:
+                yield line
+
+# Use it exactly like a list:
+for word in read_wordlist("/usr/share/wordlists/rockyou.txt"):
+    if word.startswith("admin"):
+        print(word)
+
+Reading rockyou.txt (~14 million lines) as a list would use ~130 MB of RAM. As a generator, it uses ~4 KB.
+8. Error Handling
+
+Networking code fails constantly — timeouts, refused connections, DNS errors, malformed responses. Robust error handling is what separates a scanner that runs to completion from one that dies on the first unreachable host.
+8.1 try / except / else / finally
+import socket
+
+def probe(host: str, port: int) -> str:
+    s = socket.socket()
+    s.settimeout(2)
+    try:
+        s.connect((host, port))
+    except socket.timeout:
+        return "timeout"
+    except ConnectionRefusedError:
+        return "refused"
+    except socket.gaierror:
+        return "dns error"
+    except OSError as e:
+        return f"error: {e}"
+    else:
+        # Runs only if try completed without exception:
+        return "open"
+    finally:
+        # Always runs — cleanup goes here:
+        s.close()
+
+Never catch bare except: — it swallows KeyboardInterrupt and SystemExit and turns Ctrl+C into a debugging nightmare. Catch specific exception types, or except Exception if you must cast a wide net.
+8.2 Raising Exceptions
+def parse_port(s: str) -> int:
+    n = int(s)
+    if not 1 <= n <= 65535:
+        raise ValueError(f"port out of range: {n}")
+    return n
+8.3 Custom Exceptions
+
+Custom exception classes let callers handle your specific failure modes distinctly.
+class ScanError(Exception):
+    """Base for all scanner errors."""
+
+class HostUnreachable(ScanError):
+    def _​_init__(self, host: str):
+        super()._​_init__(f"host {host} is unreachable")
+        self.host = host
+
+class RateLimited(ScanError):
+    def _​_init__(self, retry_after: float):
+        super()._​_init__(f"rate limited, retry after {retry_after}s")
+        self.retry_after = retry_after
+
+# Callers can catch narrowly:
+try:
+    do_scan()
+except RateLimited as e:
+    time.sleep(e.retry_after)
+except HostUnreachable as e:
+    log.warning(f"skipping {e.host}")
+except ScanError:
+    log.exception("scan failed")
+8.4 Context Managers
+
+The with statement guarantees cleanup even if the body raises. It is the correct way to manage sockets, files, and any resource that needs explicit close.
+import socket
+
+# The socket is closed automatically, even if send/recv raises:
+with socket.create_connection(("example.com", 80), timeout=3) as s:
+    s.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+    print(s.recv(4096))
+# socket closed here, guaranteed
+
+You can write your own context managers with contextlib.contextmanager:
+from contextlib import contextmanager
+import socket
+
+@contextmanager
+def tcp(host: str, port: int, timeout: float = 3.0):
+    s = socket.create_connection((host, port), timeout=timeout)
+    try:
+        yield s
+    finally:
+        s.close()
+
+with tcp("example.com", 80) as s:
+    s.sendall(b"HEAD / HTTP/1.0\r\n\r\n")
+    data = s.recv(4096)
+9. File I/O and Encoding
+9.1 Text Mode vs Binary Mode
+# Text mode — decodes bytes to str using the given encoding:
+with open("targets.txt", encoding="utf-8") as f:
+    for line in f:
+        print(line.rstrip())
+
+# Binary mode — raw bytes, no decoding:
+with open("shellcode.bin", "rb") as f:
+    payload = f.read()
+
+# Always specify encoding in text mode. Never rely on the platform default.
+9.2 Writing
+# Write text — overwrites any existing file:
+with open("scan.log", "w", encoding="utf-8") as f:
+    f.write("scan started\n")
+
+# Append instead of overwrite:
+with open("scan.log", "a", encoding="utf-8") as f:
+    f.write("host 10.10.10.5 open\n")
+
+# Write raw bytes:
+with open("payload.bin", "wb") as f:
+    f.write(bytes.fromhex("9090909031c0"))
+9.3 Wordlist Handling
+
+Wordlists often contain non-UTF-8 bytes (rockyou.txt is a famous example). errors="replace" swaps undecodable bytes for the Unicode replacement character rather than raising.
+def load_wordlist(path: str) -> list[str]:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return [line.rstrip("\n") for line in f if line.strip()]
+
+words = load_wordlist("/usr/share/wordlists/rockyou.txt")
+print(len(words))
+
+For huge wordlists, use the generator pattern from Section 7.6 to avoid loading everything into memory.
+9.4 Encoding Pitfalls
+
+The single most common Python bug in pentesting scripts is mixing str and bytes. Rules to memorize:
+
+    Data crossing a socket, file opened in binary mode, or subprocess pipe is bytes.
+    Data displayed to a terminal or written to a text-mode file is str.
+    Convert explicitly with .encode(encoding) and .decode(encoding).
+    Never assume the platform default encoding — always name it.
+
+# Wrong — will crash on any non-ASCII byte:
+data.decode()
+
+# Right — explicit encoding, explicit error handling:
+data.decode("utf-8", errors="replace")
+10. Standard Library Highlights for Pentesters
+
+The Python standard library alone is a pentesting toolkit. These are the modules you will reach for most.
+10.1 os and sys
+import os, sys
+
+os.getenv("PATH")                    # environment variable
+os.getcwd()                          # current working directory
+os.listdir(".")                      # directory contents
+sys.argv                             # command-line arguments
+sys.exit(1)                          # exit with a status code
+sys.stderr.write("error: ...\n")     # write to stderr
+10.2 subprocess
+
+Run external commands cleanly. subprocess.run is the modern entry point.
+import subprocess
+
+# Capture output as text:
+result = subprocess.run(
+    ["nmap", "-sS", "-p", "22,80,443", "10.10.10.50"],
+    capture_output=True,
+    text=True,
+    timeout=60,
+)
+print(result.stdout)
+print(result.returncode)
+
+# Never pass shell=True with untrusted input — command injection risk.
+# Prefer a list of arguments, which does not invoke a shell.
+10.3 pathlib
+
+Object-oriented paths. Replaces most os.path usage.
+from pathlib import Path
+
+wordlist_dir = Path("/usr/share/wordlists")
+for f in wordlist_dir.rglob("*.txt"):
+    print(f.name, f.stat().st_size)
+
+p = Path.home() / "loot" / "creds.txt"
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text("admin:hunter2\n")
+10.4 json
+import json
+
+# Parse a JSON string:
+data = json.loads('{"host":"10.10.10.5","open":[22,80]}')
+data["open"]                         # [22, 80]
+
+# Serialize:
+json.dumps(data, indent=2)
+
+# Read and write JSON files:
+with open("report.json", encoding="utf-8") as f:
+    report = json.load(f)
+
+with open("report.json", "w", encoding="utf-8") as f:
+    json.dump(report, f, indent=2)
+10.5 base64
+
+Web tokens, HTTP basic auth headers, and many CTF challenges use base64.
+import base64
+
+# Encode credentials for HTTP Basic Auth:
+creds = base64.b64encode(b"admin:hunter2").decode("ascii")
+header = f"Authorization: Basic {creds}"
+
+# Decode:
+base64.b64decode(b"YWRtaW46aHVudGVyMg==")    # b'admin:hunter2'
+
+# URL-safe variant (used in JWTs):
+base64.urlsafe_b64encode(b"payload")
+10.6 hashlib
+import hashlib
+
+# Compute hashes of a wordlist for offline cracking:
+def md5(s: str) -> str:
+    return hashlib.md5(s.encode()).hexdigest()
+
+md5("password123")                   # '482c811da5d5b4bc6d497ffa98491e38'
+hashlib.sha256(b"admin").hexdigest()
+hashlib.sha1(b"admin").hexdigest()
+
+# NTLM hash (used in Windows AD):
+import hashlib
+def nt_hash(password: str) -> str:
+    return hashlib.new("md4", password.encode("utf-16-le")).hexdigest()
+10.7 hmac
+
+For validating JWT signatures, signed cookies, and API tokens.
+import hmac, hashlib
+
+secret = b"super-secret-key"
+message = b"user=admin&role=user"
+sig = hmac.new(secret, message, hashlib.sha256).hexdigest()
+
+# Constant-time comparison — resists timing attacks:
+hmac.compare_digest(sig, "expected-sig")
+10.8 re
+
+Regular expressions. Compile once, use many times.
+import re
+
+IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+EMAIL_RE = re.compile(r"[\w.-]+@[\w.-]+\.\w+")
+
+text = "server 10.10.10.5, contact admin@corp.local"
+IP_RE.findall(text)                  # ['10.10.10.5']
+EMAIL_RE.findall(text)               # ['admin@corp.local']
+10.9 itertools
+
+Combinatorial primitives that show up constantly in credential spraying and permutation generation.
+import itertools
+
+# Password spraying: every user against every password:
+users = ["alice", "bob", "carol"]
+passwords = ["Winter2026!", "Spring2026!", "P@ssw0rd"]
+for user, pwd in itertools.product(users, passwords):
+    print(f"try {user}:{pwd}")
+
+# Chunk an iterable into groups (3.12+ has itertools.batched):
+for chunk in itertools.batched(range(10), 3):
+    print(chunk)
+# (0, 1, 2)
+# (3, 4, 5)
+# (6, 7, 8)
+# (9,)
+11. PEP 8 and Code Style
+
+PEP 8 is Python's style guide. Following it is not aesthetic preference — consistent style makes code that other operators can read fast, and every serious project runs automated tools to enforce it.
+11.1 The Rules That Matter Most
+
+    4 spaces for indentation, never tabs.
+    Lines up to 100 characters (PEP 8 says 79, but 100 is the pragmatic modern choice).
+    snake_case for functions and variables, PascalCase for classes, UPPER_SNAKE for constants.
+    Two blank lines between top-level functions and classes, one blank line between methods.
+    Import order: standard library, third-party, local — each group separated by a blank line.
+    No unused imports.
+    Docstrings for every public function, class, and module.
+
+11.2 ruff — The One-Stop Linter
+
+ruff is a Rust-written linter and formatter that replaces flake8, isort, pyupgrade, and black at 10-100x the speed. It is the standard on new Python projects in 2026.
+pip install ruff
+
+# Lint:
+ruff check .
+
+# Auto-fix what it can:
+ruff check --fix .
+
+# Format (replaces black):
+ruff format .
+
+# Config in pyproject.toml: [tool.ruff
+]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint
+]
+select = ["E", "F", "I", "N", "UP", "B", "S", "SIM"]
+# E: pycodestyle errors
+# F: pyflakes (unused imports, undefined names)
+# I: isort (import ordering)
+# N: pep8-naming
+# UP: pyupgrade (modern syntax)
+# B: bugbear (common bug patterns)
+# S: bandit (security issues)
+# SIM: simplification suggestions
+11.3 black — If You Prefer It
+
+black is the older, opinionated formatter. It still works and is fine.
+pip install black
+black .
+
+Pick one formatter per project and stick with it. Mixing formatters produces churn in every diff.
+11.4 mypy — Static Type Checking
+
+If you use type hints, run mypy to catch bugs the interpreter will not.
+pip install mypy
+mypy scanner.py
+
+# strict mode catches more:
+mypy --strict scanner.py [tool.mypy
+]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+
+    Pentester Insight: For throwaway one-off scripts, skip the ceremony. For any tool you will use twice, or share with a teammate, wire up ruff and mypy from the start. Ten minutes of tooling setup saves hours of debugging months later.
+
+12. Building a Small Tool — HTTP Header Enumerator
+
+Time to assemble what you learned. This is a ~40-line HTTP header enumerator that connects to a target, sends a HEAD request, prints all response headers, and flags common security header issues. It uses only the standard library.
+#!/usr/bin/env python3
+"""http_headers.py — enumerate and evaluate HTTP response headers."""
+from __future__ import annotations
+
+import socket
+import ssl
+import sys
+from urllib.parse import urlparse
+
+SECURITY_HEADERS = {
+    "strict-transport-security": "HSTS not set",
+    "content-security-policy": "CSP not set",
+    "x-frame-options": "clickjacking protection missing",
+    "x-content-type-options": "MIME sniffing not disabled",
+    "referrer-policy": "referrer policy not set",
+    "permissions-policy": "permissions policy not set",
+}
+
+
+def fetch_headers(url: str, timeout: float = 5.0) -> dict[str, str]:
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"invalid URL: {url}")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+
+    sock = socket.create_connection((host, port), timeout=timeout)
+    if parsed.scheme == "https":
+        ctx = ssl.create_default_context()
+        sock = ctx.wrap_socket(sock, server_hostname=host)
+
+    with sock:
+        request = f"HEAD {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        sock.sendall(request.encode("ascii"))
+        chunks: list[bytes] = []
+        while chunk := sock.recv(4096):
+            chunks.append(chunk)
+
+    raw = b"".join(chunks).decode("iso-8859-1", errors="replace")
+    header_block = raw.split("\r\n\r\n", 1)[0]
+    lines = header_block.split("\r\n")
+    status_line = lines[0]
+    headers = {}
+    for line in lines[1:]:
+        if ":" in line:
+            name, _, value = line.partition(":")
+            headers[name.strip().lower()] = value.strip()
+    headers["_status"] = status_line
+    return headers
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print(f"usage: {argv[0]} <url>", file=sys.stderr)
+        return 2
+    try:
+        headers = fetch_headers(argv[1])
+    except (OSError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    print(headers.pop("_status"))
+    for name, value in sorted(headers.items()):
+        print(f"  {name}: {value}")
+
+    print("\n[security header audit]")
+    for name, message in SECURITY_HEADERS.items():
+        marker = "OK" if name in headers else "MISSING"
+        print(f"  [{marker}] {name} — {message if marker == 'MISSING' else headers[name]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+
+Save the file, make it executable, and run it:
+chmod +x http_headers.py
+./http_headers.py https://example.com
+# HTTP/1.1 200 OK
+#   accept-ranges: bytes
+#   age: 12345
+#   cache-control: max-age=3600
+#   content-length: 1256
+#   content-type: text/html; charset=UTF-8
+#   date: Fri, 04 Sep 2026 12:00:00 GMT
+#   etag: "84238dfc8092e5d9c0dac8ef93371a07"
+#   last-modified: Thu, 17 Oct 2024 00:00:00 GMT
+#   server: ECAcc (nyd/D190)
+#   vary: Accept-Encoding
+#
+# [security header audit]
+#   [MISSING] strict-transport-security — HSTS not set
+#   [MISSING] content-security-policy — CSP not set
+#   [MISSING] x-frame-options — clickjacking protection missing
+#   [MISSING] x-content-type-options — MIME sniffing not disabled
+#   [MISSING] referrer-policy — referrer policy not set
+#   [MISSING] permissions-policy — permissions policy not set
+
+Notice what this tool demonstrates from everything you learned:
+
+    Type hints (dict[str, str], list[bytes]) — Section 7.3
+    The walrus operator inside the recv() loop — Section 6.5
+    Context manager (with sock:) — Section 8.4
+    Explicit exception handling with a narrow tuple — Section 8.1
+    Dictionary as a lookup table for security checks — Section 5.7
+    Bytes/str boundary crossing — Section 5.4 and Section 9.4
+    Standard library only — no dependencies, no venv required to run
+
+13. Exercises
+Guided Exercises
+
+Exercise 1 — Port Scanner
+
+Objective: Write a script portscan.py that takes a host and a comma-separated port list from the command line and prints which ports are open. Use socket.create_connection with a 1-second timeout.
+
+Hint: Follow the pattern from is_open() in Section 7.1. Iterate with a for loop over the port list and use a try/except OSError block.
+
+Exercise 2 — Wordlist Filter
+
+Objective: Write a script that reads a wordlist file from stdin and prints only the lines that are between 8 and 16 characters long and contain at least one digit. Use a generator to keep memory usage low.
+
+Hint: Read from sys.stdin line by line, .rstrip("\n") each line, and use any(c.isdigit() for c in line) to check for digits.
+
+Exercise 3 — JSON Report Merger
+
+Objective: Write a script merge_scans.py that reads two JSON files each shaped like {"host": str, "open_ports": list[int]} and produces a merged report grouping hosts and unioning their open port sets.
+
+Hint: Use json.load to read, a dict keyed by host with a set value, and json.dump(..., indent=2) to write.
+Independent Exercises
+
+Exercise 4 — Timing Decorator with Threshold
+
+Objective: Extend the @timed decorator from Section 7.5 to accept a threshold argument. If a call takes longer than the threshold, print a warning to stderr; otherwise stay silent.
+
+Hint: You need a decorator factory — a function that returns a decorator. The usage should look like @timed(threshold_ms=500).
+
+Exercise 5 — Subdomain Deduplicator
+
+Objective: Write a tool that takes any number of text file paths on the command line, reads subdomains one per line from each, deduplicates them case-insensitively, sorts them, and prints the result.
+
+Hint: A set of lowercased strings, then sorted() on the result. Use pathlib.Path to iterate the arguments.
+
+Exercise 6 — Basic Auth Header Generator
+
+Objective: Write a small utility that accepts a username and password (as arguments or from stdin) and prints a complete Authorization: Basic ... header value. Handle non-ASCII characters correctly by encoding as UTF-8 before base64.
+
+Hint: base64.b64encode(f"{user}:{pwd}".encode("utf-8")).decode("ascii"). Consider what happens if the user or password contains a colon.
+14. Summary and Next Lesson
+
+You now have every Python fundamental you need to build offensive tooling. You installed a modern interpreter on Kali 2026, isolated your projects with virtual environments (venv, pipx, uv), and worked through the core language — data types, control flow, functions, error handling, file I/O — from a pentesting angle. You saw the standard library modules that show up in every serious script and finished by building a real HTTP header enumerator using only what ships with Python.
+
+Key takeaways to carry forward:
+
+    Always work inside a virtual environment. uv is the fastest modern choice; venv is the reliable fallback.
+    bytes and str are different types. Cross the boundary explicitly with .encode() and .decode(), always with a named encoding.
+    Every socket, file, and subprocess resource belongs inside a with block.
+    Catch specific exception types, never bare except:.
+    Type hints plus ruff plus mypy catch bugs before you run the code.
+    Prefer generators over lists for anything that reads a large file or a long stream.
+
+Next lesson — Lesson 02: Python for Network Programming. You will build on this foundation to write raw socket clients and servers, use asyncio for concurrent scanning of thousands of hosts, work with scapy to craft custom packets at Layer 2 and Layer 3, and implement a working TCP SYN scanner from scratch.
+
+
+
+
+
+
+
+Lesson 05 — Python Tool Development: Building Real Pentest Tools
+
+    Module 03: Programming — Python and C · Penetration Testing with Kali Linux 1.0 · Red Team Leaders
+
+Introduction
+
+Every pentester writes scripts. Very few write tools. A script is a personal hack — a hundred lines of glue that only its author can run, that dumps output to stdout with print, that swallows exceptions with a bare except, and that will silently break the moment a target returns something unexpected. A tool is something a teammate can install with pip install, run with --help, pipe into jq, schedule from a cron job, and trust to fail loudly when the network drops.
+
+This lesson takes you from the script mindset to the tool mindset. You will learn how to lay out a proper Python project, expose it as a CLI command, parse arguments cleanly, log structured events, format output for both humans and machines, run I/O concurrently without stepping on shared state, retry gracefully on transient failures, and package the whole thing for distribution. You will then build two complete, working tools from scratch: a passive-plus-active subdomain enumerator and a concurrent HTTP vulnerability scanner. Every line of code in this lesson is copy-paste runnable on a stock Kali 2024.x with Python 3.11 or newer.
+
+By the end, you will have the skeleton of your own private tool suite and the discipline to keep every future one-off script from becoming another /tmp/scan2_final_FINAL.py.
+1. From Script to Tool — What Separates a Hack from a Shippable Tool
+
+A shippable tool has non-negotiable properties. Miss any of them and you have a script.
+Property	Script	Tool
+Installation	Copy the file	pip install . gives a $PATH command
+Arguments	Positional guesswork	argparse with --help
+Config	Hardcoded strings	TOML file + environment variables
+Output	print() everywhere	JSON, CSV, and colored terminal modes
+Errors	Traceback or silent	Logged, retried, non-zero exit code
+Concurrency	Serial for loop	ThreadPool with rate limits
+Tests	None	pytest with mocked network
+Versioning	Last modified date	Semantic version in pyproject.toml
+
+The bar to clear is not high, but every one of these decisions must be made consciously. This lesson makes them all explicit.
+2. Project Structure — src Layout and pyproject.toml
+
+Modern Python projects use the src layout. It prevents the "import your own package by accident from the current directory" bug that has plagued Python for two decades.
+2.1 Directory Skeleton
+recon-suite/
+├── pyproject.toml
+├── README.md
+├── LICENSE
+├── .gitignore
+├── src/
+│   └── recon_suite/
+│       ├── __init__.py
+│       ├── __main__.py
+│       ├── cli.py
+│       ├── config.py
+│       ├── logging_setup.py
+│       ├── subdomains.py
+│       ├── scanner.py
+│       └── utils.py
+└── tests/
+    ├── __init__.py
+    ├── test_subdomains.py
+    └── test_scanner.py
+
+The src/ directory is not decoration — it forces you to install the package before you can import it, which surfaces packaging bugs immediately rather than in production.
+2.2 A Minimal pyproject.toml
+[build-system
+]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project
+]
+name = "recon-suite"
+version = "0.1.0"
+description = "Reconnaissance tools for authorized pentests"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Your Name", email = "you@example.com" }]
+dependencies = [
+    "requests>=2.31",
+    "dnspython>=2.4",
+    "rich>=13.7",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies
+]
+dev = ["pytest>=8.0", "pytest-cov>=4.1", "responses>=0.24", "ruff>=0.5"]
+
+[project.scripts
+]
+recon = "recon_suite.cli:main"
+subenum = "recon_suite.subdomains:cli"
+vulnscan = "recon_suite.scanner:cli"
+
+[tool.setuptools.packages.find
+]
+where = ["src"]
+
+The [project.scripts] table is the magic that installs recon, subenum, and vulnscan as commands on $PATH when the user runs pip install ..
+2.3 Installing in Development Mode
+# From the project root:
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Editable install — changes to source code take effect immediately:
+pip install -e ".[dev]"
+
+# Verify the commands are on PATH:
+which recon
+# /home/kali/recon-suite/.venv/bin/recon
+
+recon --help
+
+    Pentester Insight: Always develop inside a virtualenv. On Kali, the system Python is used by the OS itself — pip install outside a venv can break apt and leave you unable to update the system. python3 -m venv costs three seconds and saves entire afternoons.
+
+3. argparse Deep Dive
+
+argparse ships with Python and covers 95% of CLI needs. Reach for it first.
+3.1 The Basic Pattern
+# src/recon_suite/cli.py
+import argparse
+import sys
+from importlib.metadata import version as pkg_version
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="recon",
+        description="Reconnaissance suite for authorized pentests",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Run `recon <subcommand> --help` for subcommand options.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {pkg_version('recon-suite')}",
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="count",
+        default=0,
+        help="Increase verbosity (-v, -vv, -vvv)",
+    )
+    return parser
+3.2 Subcommands
+def add_subcommands(parser: argparse.ArgumentParser) -> None:
+    sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    # `recon subenum` subcommand
+    p_sub = sub.add_parser("subenum", help="Enumerate subdomains")
+    p_sub.add_argument("domain", help="Root domain, e.g. example.com")
+    p_sub.add_argument("-o", "--output", help="Write JSON results to file")
+    p_sub.add_argument("--threads", type=int, default=20, help="Concurrent DNS workers")
+
+    # `recon scan` subcommand
+    p_scan = sub.add_parser("scan", help="HTTP vulnerability scan")
+    p_scan.add_argument("target", help="Base URL, e.g. https://example.com")
+    p_scan.add_argument("--timeout", type=float, default=5.0)
+3.3 Mutually Exclusive Groups
+group = p_scan.add_mutually_exclusive_group()
+group.add_argument("--json", action="store_true", help="Machine-readable output")
+group.add_argument("--csv", action="store_true", help="CSV output")
+group.add_argument("--table", action="store_true", help="Colored table (default)")
+
+argparse will reject --json --csv at parse time with a clear error message.
+3.4 Custom Types
+def positive_int(raw: str) -> int:
+    value = int(raw)
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"{value} is not a positive integer")
+    return value
+
+def url_type(raw: str) -> str:
+    if not raw.startswith(("http://", "https://")):
+        raise argparse.ArgumentTypeError(f"URL must include scheme: {raw}")
+    return raw.rstrip("/")
+
+p_scan.add_argument("target", type=url_type)
+p_scan.add_argument("--threads", type=positive_int, default=10)
+
+Custom types keep validation out of the business logic. If the value survives parsing, it is guaranteed valid.
+3.5 Help Formatting
+
+Long help text goes in the description and epilog. Use RawDescriptionHelpFormatter to preserve your line breaks, or ArgumentDefaultsHelpFormatter to auto-append the default of each argument to its help line.
+parser = argparse.ArgumentParser(
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+4. Alternatives — click and typer
+
+argparse is stdlib and always available. But two third-party libraries win on ergonomics for larger tools.
+4.1 When to Use Each
+Library	Strength	Weakness
+argparse	Zero deps, universal	Verbose for deep subcommand trees
+click	Battle-tested, decorators	Slight boilerplate for complex types
+typer	Type hints define the CLI	Requires Python 3.9+, uses click under the hood
+
+Prefer typer when your CLI is small-to-medium and you already use type hints. Prefer click for very large CLIs (like kubectl, pip, flask). Stick with argparse when you cannot add dependencies (offline air-gapped assessments).
+4.2 Minimal typer Example
+# src/recon_suite/typer_cli.py
+import typer
+from typing import Optional
+from pathlib import Path
+
+app = typer.Typer(add_completion=False, help="Recon suite")
+
+@app.command()
+def subenum(
+    domain: str = typer.Argument(..., help="Root domain to enumerate"),
+    output: Optional[Path] = typer.Option(None, "-o", "--output"),
+    threads: int = typer.Option(20, "--threads", min=1, max=200),
+):
+    """Enumerate subdomains passively and actively."""
+    typer.echo(f"Enumerating {domain} with {threads} workers")
+
+@app.command()
+def scan(
+    target: str,
+    timeout: float = 5.0,
+    json_out: bool = typer.Option(False, "--json"),
+):
+    """Scan a target for common HTTP vulnerabilities."""
+    typer.echo(f"Scanning {target}")
+
+if __name__ == "__main__":
+    app()
+
+Six decorators, and typer builds --help, subcommands, type validation, and shell completion for free.
+5. Configuration Files — TOML and Environment Variables
+
+Hardcoded values are the enemy. A tool the reader cannot reconfigure is a tool they will fork and never contribute back to.
+5.1 TOML with the Standard Library
+
+Python 3.11 ships tomllib in the stdlib — no dependency needed for reading TOML.
+# src/recon_suite/config.py
+import os
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+DEFAULT_CONFIG_PATHS = [
+    Path.cwd() / "recon.toml",
+    Path.home() / ".config" / "recon-suite" / "config.toml",
+    Path("/etc/recon-suite/config.toml"),
+]
+
+@dataclass
+class Config:
+    user_agent: str = "recon-suite/0.1"
+    timeout: float = 5.0
+    threads: int = 20
+    dns_resolvers: list[str] = field(default_factory=lambda: ["1.1.1.1", "8.8.8.8"])
+    crtsh_url: str = "https://crt.sh"
+
+def load_config(explicit: Path | None = None) -> Config:
+    cfg = Config()
+    candidates = [explicit] if explicit else DEFAULT_CONFIG_PATHS
+    for path in candidates:
+        if path and path.is_file():
+            with path.open("rb") as f:
+                data = tomllib.load(f)
+            for key, value in data.get("recon", {}).items():
+                if hasattr(cfg, key):
+                    setattr(cfg, key, value)
+            break
+    # Environment variables always win over file config:
+    if ua := os.environ.get("RECON_USER_AGENT"):
+        cfg.user_agent = ua
+    if timeout := os.environ.get("RECON_TIMEOUT"):
+        cfg.timeout = float(timeout)
+    if threads := os.environ.get("RECON_THREADS"):
+        cfg.threads = int(threads)
+    return cfg
+5.2 Example recon.toml
+[recon
+]
+user_agent = "Mozilla/5.0 (compatible; RedTeam/1.0)"
+timeout = 8.0
+threads = 50
+dns_resolvers = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+crtsh_url = "https://crt.sh"
+5.3 The Precedence Rule
+
+The universally expected precedence is: command-line flag > environment variable > config file > default. Load in that order and let each layer overwrite the previous one.
+6. Logging Done Right
+
+print is for humans. logging is for tools.
+6.1 The Basic Setup
+# src/recon_suite/logging_setup.py
+import json
+import logging
+import sys
+from datetime import datetime, timezone
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        # Merge any structured fields attached via `extra=`:
+        for key, value in record.__dict__.items():
+            if key not in payload and key not in ("args", "msg", "levelname",
+                                                   "name", "created", "exc_info",
+                                                   "exc_text", "stack_info",
+                                                   "lineno", "funcName", "filename",
+                                                   "module", "msecs", "relativeCreated",
+                                                   "thread", "threadName", "processName",
+                                                   "process", "pathname", "levelno"):
+                payload[key] = value
+        return json.dumps(payload)
+
+def setup_logging(verbosity: int, json_output: bool = False) -> None:
+    level = {0: logging.WARNING, 1: logging.INFO}.get(verbosity, logging.DEBUG)
+    root = logging.getLogger()
+    root.setLevel(level)
+    handler = logging.StreamHandler(sys.stderr)
+    if json_output:
+        handler.setFormatter(JSONFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        ))
+    root.handlers = [handler]
+6.2 Using It
+import logging
+log = logging.getLogger(__name__)
+
+log.info("Starting scan", extra={"target": "example.com", "threads": 20})
+log.warning("HTTP 429 rate limit hit", extra={"url": url, "retry_in": 30})
+log.error("Timeout after 3 retries", extra={"url": url}, exc_info=True)
+6.3 Why stderr, Not stdout
+
+Logs go to stderr. Data goes to stdout. This is the Unix rule that lets your users do:
+recon subenum example.com --json 2>subenum.log | jq '.subdomains[]' > hits.txt
+
+Mix them and you break every pipeline the user will ever construct.
+7. Output Formatting — rich, JSON, CSV
+
+Humans want colored tables. Machines want NDJSON. Ship both.
+7.1 Colored Tables with rich
+from rich.console import Console
+from rich.table import Table
+
+def print_results_table(results: list[dict]) -> None:
+    console = Console()
+    table = Table(title="Scan Results", show_lines=True)
+    table.add_column("URL", style="cyan", no_wrap=False)
+    table.add_column("Status", justify="right", style="green")
+    table.add_column("Finding", style="yellow")
+    for row in results:
+        style = "red" if row["severity"] == "high" else "yellow"
+        table.add_row(row["url"], str(row["status"]), f"[{style}]{row['finding']}[/{style}]")
+    console.print(table)
+7.2 Progress Bars
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+
+with Progress(
+    SpinnerColumn(),
+    TextColumn("[progress.description]{task.description}"),
+    BarColumn(),
+    TextColumn("{task.completed}/{task.total}"),
+) as progress:
+    task = progress.add_task("Scanning", total=len(urls))
+    for url in urls:
+        do_check(url)
+        progress.advance(task)
+7.3 JSON Output Mode
+import json
+
+def emit_json(results: list[dict]) -> None:
+    print(json.dumps({"results": results, "count": len(results)}, indent=2))
+
+def emit_ndjson(results: list[dict]) -> None:
+    for row in results:
+        print(json.dumps(row))
+
+NDJSON (one JSON object per line) is superior for streaming — the consumer can jq line by line without waiting for the closing bracket.
+7.4 CSV Export
+import csv
+import sys
+
+def emit_csv(results: list[dict]) -> None:
+    if not results:
+        return
+    writer = csv.DictWriter(sys.stdout, fieldnames=results[0].keys())
+    writer.writeheader()
+    writer.writerows(results)
+8. Concurrency Patterns
+
+Pentest tools are almost always I/O-bound. Getting concurrency right is the difference between a scan that finishes in 30 seconds and one that runs overnight.
+8.1 ThreadPoolExecutor for I/O-Bound Work
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+
+def probe(url: str) -> tuple[str, int | None]:
+    try:
+        r = requests.get(url, timeout=5)
+        return url, r.status_code
+    except requests.RequestException:
+        return url, None
+
+def probe_all(urls: list[str], workers: int = 20) -> list[tuple[str, int | None]]:
+    results = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(probe, u): u for u in urls}
+        for fut in as_completed(futures):
+            results.append(fut.result())
+    return results
+8.2 ProcessPoolExecutor for CPU-Bound Work
+
+Use processes when you are hashing, cracking, or doing heavy parsing.
+from concurrent.futures import ProcessPoolExecutor
+import hashlib
+
+def crack(candidate: str, target_hash: str) -> str | None:
+    if hashlib.sha256(candidate.encode()).hexdigest() == target_hash:
+        return candidate
+    return None
+
+def crack_wordlist(words: list[str], target: str) -> str | None:
+    with ProcessPoolExecutor() as pool:
+        for result in pool.map(crack, words, [target] * len(words), chunksize=1000):
+            if result:
+                return result
+    return None
+8.3 asyncio Semaphore for Rate Control
+import asyncio
+import aiohttp
+
+async def bounded_get(session: aiohttp.ClientSession, sem: asyncio.Semaphore, url: str) -> int | None:
+    async with sem:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                return r.status
+        except Exception:
+            return None
+
+async def scan(urls: list[str], concurrency: int = 50) -> list[int | None]:
+    sem = asyncio.Semaphore(concurrency)
+    async with aiohttp.ClientSession() as session:
+        tasks = [bounded_get(session, sem, u) for u in urls]
+        return await asyncio.gather(*tasks)
+
+The semaphore caps the number of in-flight requests. Fifty is a polite rate for most third-party services.
+9. Threading Pitfalls
+9.1 The GIL
+
+CPython's Global Interpreter Lock allows only one thread to execute Python bytecode at a time. This means threading does not speed up CPU-bound work — use processes for that. Threading only helps when threads spend most of their time waiting on I/O.
+9.2 Shared State
+
+Two threads incrementing a counter without a lock will lose updates. Always guard shared mutable state.
+import threading
+
+class SafeCounter:
+    def __init__(self) -> None:
+        self._value = 0
+        self._lock = threading.Lock()
+    def increment(self) -> None:
+        with self._lock:
+            self._value += 1
+    @property
+    def value(self) -> int:
+        with self._lock:
+            return self._value
+9.3 Producer-Consumer with queue.Queue
+
+queue.Queue is thread-safe by design and is the standard way to hand work between threads.
+import queue
+import threading
+
+work_q: queue.Queue[str] = queue.Queue()
+results: list[dict] = []
+results_lock = threading.Lock()
+
+def worker() -> None:
+    while True:
+        try:
+            url = work_q.get(timeout=1)
+        except queue.Empty:
+            return
+        result = do_check(url)
+        with results_lock:
+            results.append(result)
+        work_q.task_done()
+
+for url in urls:
+    work_q.put(url)
+
+threads = [threading.Thread(target=worker, daemon=True) for _ in range(20)]
+for t in threads:
+    t.start()
+work_q.join()
+10. Robust Error Handling and Retries
+
+Networks fail. Servers rate-limit. DNS times out. A production tool retries with backoff.
+10.1 Using tenacity
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import requests
+
+@retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((requests.Timeout, requests.ConnectionError)),
+    reraise=True,
+)
+def fetch(url: str) -> requests.Response:
+    r = requests.get(url, timeout=5)
+    r.raise_for_status()
+    return r
+10.2 A Hand-Rolled Retry Decorator
+import functools
+import logging
+import time
+from typing import Callable, TypeVar
+
+T = TypeVar("T")
+log = logging.getLogger(__name__)
+
+def retry_on(exceptions: tuple[type[BaseException], ...], attempts: int = 3, base: float = 1.0):
+    def deco(fn: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs) -> T:
+            last_exc: BaseException | None = None
+            for i in range(attempts):
+                try:
+                    return fn(*args, **kwargs)
+                except exceptions as e:
+                    last_exc = e
+                    delay = base * (2 ** i)
+                    log.warning("Retry %d/%d after %.1fs: %s", i + 1, attempts, delay, e)
+                    time.sleep(delay)
+            assert last_exc is not None
+            raise last_exc
+        return wrapper
+    return deco
+11. Building Tool 1 — Subdomain Enumerator
+
+This is a complete, working tool. Save it as src/recon_suite/subdomains.py inside the project structure from section 2, or drop it in a standalone script for a quick test.
+"""
+subenum — passive + active subdomain enumeration.
+Passive source: crt.sh certificate transparency logs.
+Active: brute-force with dnspython against a small wordlist.
+"""
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import json
+import logging
+import re
+import sys
+from dataclasses import dataclass, field, asdict
+
+import dns.resolver
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+log = logging.getLogger("subenum")
+
+DEFAULT_WORDLIST = [
+    "www", "mail", "ftp", "webmail", "smtp", "pop", "ns1", "ns2", "dev",
+    "test", "staging", "api", "portal", "admin", "vpn", "remote", "app",
+    "beta", "shop", "store", "blog", "news", "media", "static", "cdn",
+    "assets", "images", "img", "js", "css", "old", "new", "backup", "db",
+    "sql", "mysql", "postgres", "monitor", "grafana", "kibana", "jenkins",
+    "git", "gitlab", "svn", "jira", "confluence", "wiki", "help", "support",
+    "docs", "kb", "download", "downloads", "files", "upload", "uploads",
+    "internal", "intranet", "extranet", "corp", "office", "hr", "finance",
+]
+
+@dataclass
+class Finding:
+    subdomain: str
+    source: str
+    ips: list[str] = field(default_factory=list)
+
+# ---------- Passive: crt.sh ----------
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=15), reraise=True)
+def fetch_crtsh(domain: str, timeout: float = 15.0) -> list[str]:
+    url = f"https://crt.sh/?q=%25.{domain}&output=json"
+    log.info("Querying crt.sh for %s", domain)
+    r = requests.get(url, timeout=timeout, headers={"User-Agent": "recon-suite/0.1"})
+    r.raise_for_status()
+    seen: set[str] = set()
+    for entry in r.json():
+        for name in re.split(r"\s+", entry.get("name_value", "")):
+            name = name.strip().lower().lstrip("*.")
+            if name.endswith(domain) and " " not in name and name:
+                seen.add(name)
+    log.info("crt.sh returned %d unique names", len(seen))
+    return sorted(seen)
+
+# ---------- Active: DNS brute force ----------
+
+def resolve(hostname: str, resolver: dns.resolver.Resolver) -> list[str]:
+    try:
+        answers = resolver.resolve(hostname, "A", lifetime=3.0)
+        return sorted({str(a) for a in answers})
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer,
+            dns.resolver.NoNameservers, dns.exception.Timeout):
+        return []
+
+def brute_force(domain: str, wordlist: list[str], workers: int,
+                nameservers: list[str]) -> list[Finding]:
+    resolver = dns.resolver.Resolver()
+    resolver.nameservers = nameservers
+    resolver.timeout = 2.0
+    resolver.lifetime = 3.0
+    findings: list[Finding] = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        future_to_name = {
+            pool.submit(resolve, f"{word}.{domain}", resolver): f"{word}.{domain}"
+            for word in wordlist
+        }
+        for fut in concurrent.futures.as_completed(future_to_name):
+            name = future_to_name[fut]
+            ips = fut.result()
+            if ips:
+                log.debug("Active hit: %s -> %s", name, ips)
+                findings.append(Finding(subdomain=name, source="brute", ips=ips))
+    return findings
+
+# ---------- Merge + dedupe ----------
+
+def merge(passive: list[str], active: list[Finding],
+          resolver: dns.resolver.Resolver) -> list[Finding]:
+    active_names = {f.subdomain for f in active}
+    merged: list[Finding] = list(active)
+    for name in passive:
+        if name not in active_names:
+            merged.append(Finding(subdomain=name, source="crt.sh",
+                                   ips=resolve(name, resolver)))
+    merged.sort(key=lambda f: f.subdomain)
+    return merged
+
+# ---------- CLI ----------
+
+def cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="subenum", description="Subdomain enumerator")
+    parser.add_argument("domain", help="Root domain, e.g. example.com")
+    parser.add_argument("-o", "--output", help="Write JSON to file (default: stdout)")
+    parser.add_argument("--threads", type=int, default=20)
+    parser.add_argument("--no-passive", action="store_true", help="Skip crt.sh")
+    parser.add_argument("--no-active", action="store_true", help="Skip DNS brute force")
+    parser.add_argument("--resolvers", default="1.1.1.1,8.8.8.8",
+                        help="Comma-separated DNS resolvers")
+    parser.add_argument("-v", "--verbose", action="count", default=0)
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level={0: logging.WARNING, 1: logging.INFO}.get(args.verbose, logging.DEBUG),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+    )
+
+    nameservers = [ns.strip() for ns in args.resolvers.split(",") if ns.strip()]
+    resolver = dns.resolver.Resolver()
+    resolver.nameservers = nameservers
+    resolver.lifetime = 3.0
+
+    passive: list[str] = []
+    if not args.no_passive:
+        try:
+            passive = fetch_crtsh(args.domain)
+        except Exception as e:
+            log.error("Passive enumeration failed: %s", e)
+
+    active: list[Finding] = []
+    if not args.no_active:
+        active = brute_force(args.domain, DEFAULT_WORDLIST,
+                              args.threads, nameservers)
+
+    findings = merge(passive, active, resolver)
+    payload = {
+        "domain": args.domain,
+        "count": len(findings),
+        "results": [asdict(f) for f in findings],
+    }
+    text = json.dumps(payload, indent=2)
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(text)
+        log.info("Wrote %d findings to %s", len(findings), args.output)
+    else:
+        print(text)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(cli())
+11.1 Running It
+# Basic run:
+python -m recon_suite.subdomains example.com
+
+# Verbose, custom resolvers, write to file:
+python -m recon_suite.subdomains example.com -vv \
+    --resolvers 1.1.1.1,9.9.9.9 -o example-subs.json
+
+# Passive only (useful when you cannot touch the target):
+python -m recon_suite.subdomains example.com --no-active
+
+    Pentester Insight: crt.sh has strict rate limits and occasional multi-second latency. In production you would add caching, fall back to alternative CT sources (Censys, DNSDumpster), and load a much larger wordlist. The 60-word list here is a starting point, not a finished attack surface.
+
+12. Building Tool 2 — HTTP Vulnerability Scanner
+
+A concurrent scanner that checks a target for exposed VCS metadata, secret files, missing security headers, and dangerous backup extensions. Save as src/recon_suite/scanner.py.
+"""
+vulnscan — concurrent HTTP checks for common web exposures.
+"""
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import json
+import logging
+import sys
+from dataclasses import dataclass, asdict
+from urllib.parse import urljoin
+
+import requests
+from rich.console import Console
+from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
+from rich.table import Table
+
+log = logging.getLogger("vulnscan")
+
+# Paths that should never be publicly reachable.
+EXPOSED_PATHS = [
+    (".git/config", "Exposed .git directory"),
+    (".git/HEAD", "Exposed .git directory"),
+    (".env", "Exposed .env file"),
+    (".env.local", "Exposed .env.local file"),
+    (".env.production", "Exposed production .env file"),
+    ("config.php.bak", "Backup config file"),
+    ("index.php.bak", "Backup index file"),
+    ("web.config", "IIS web.config exposed"),
+    (".DS_Store", "Exposed .DS_Store"),
+    ("wp-config.php.bak", "Backup WordPress config"),
+    ("backup.zip", "Backup archive"),
+    ("backup.tar.gz", "Backup archive"),
+    ("db.sql", "Database dump"),
+    ("dump.sql", "Database dump"),
+    ("phpinfo.php", "PHP info page"),
+    ("server-status", "Apache server-status"),
+    ("actuator/env", "Spring Actuator env"),
+    ("actuator/health", "Spring Actuator health"),
+]
+
+REQUIRED_HEADERS = {
+    "Strict-Transport-Security": "HSTS not set — MitM downgrade possible",
+    "Content-Security-Policy": "CSP not set — XSS impact amplified",
+    "X-Frame-Options": "X-Frame-Options not set — clickjacking possible",
+    "X-Content-Type-Options": "X-Content-Type-Options not set — MIME sniff",
+    "Referrer-Policy": "Referrer-Policy not set — sensitive URLs may leak",
+}
+
+@dataclass
+class Result:
+    url: str
+    status: int | None
+    finding: str
+    severity: str  # low, medium, high, critical
+
+# ---------- Individual checks ----------
+
+def check_path(session: requests.Session, base: str, path: str, label: str,
+               timeout: float) -> Result | None:
+    url = urljoin(base + "/", path)
+    try:
+        r = session.get(url, timeout=timeout, allow_redirects=False)
+    except requests.RequestException as e:
+        log.debug("Request failed: %s (%s)", url, e)
+        return None
+    if r.status_code == 200 and len(r.content) > 0:
+        severity = "critical" if path.startswith((".env", ".git/", "wp-config")) else "high"
+        return Result(url=url, status=r.status_code, finding=label, severity=severity)
+    return None
+
+def check_headers(session: requests.Session, base: str, timeout: float) -> list[Result]:
+    findings: list[Result] = []
+    try:
+        r = session.get(base, timeout=timeout)
+    except requests.RequestException as e:
+        log.error("Cannot reach %s: %s", base, e)
+        return findings
+    if not base.startswith("https://"):
+        # HSTS is meaningless over plain HTTP; skip
+        skip = {"Strict-Transport-Security"}
+    else:
+        skip = set()
+    for header, message in REQUIRED_HEADERS.items():
+        if header in skip:
+            continue
+        if header not in r.headers:
+            findings.append(Result(url=base, status=r.status_code,
+                                    finding=message, severity="medium"))
+    if r.headers.get("Server"):
+        findings.append(Result(url=base, status=r.status_code,
+                                finding=f"Server banner disclosed: {r.headers['Server']}",
+                                severity="low"))
+    return findings
+
+# ---------- Orchestrator ----------
+
+def scan(target: str, timeout: float, threads: int,
+         user_agent: str) -> list[Result]:
+    session = requests.Session()
+    session.headers["User-Agent"] = user_agent
+    results: list[Result] = []
+
+    # Header check (single request) first.
+    log.info("Checking security headers on %s", target)
+    results.extend(check_headers(session, target, timeout))
+
+    # Then concurrent path checks with a progress bar.
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+    ) as progress:
+        task = progress.add_task("Path checks", total=len(EXPOSED_PATHS))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as pool:
+            futures = [
+                pool.submit(check_path, session, target, path, label, timeout)
+                for path, label in EXPOSED_PATHS
+            ]
+            for fut in concurrent.futures.as_completed(futures):
+                r = fut.result()
+                if r is not None:
+                    results.append(r)
+                progress.advance(task)
+    return results
+
+# ---------- Output ----------
+
+def emit_table(results: list[Result]) -> None:
+    console = Console(stderr=False)
+    table = Table(title="vulnscan Findings", show_lines=True)
+    table.add_column("Severity", style="bold")
+    table.add_column("Status", justify="right")
+    table.add_column("URL", overflow="fold")
+    table.add_column("Finding")
+    severity_style = {
+        "critical": "red", "high": "orange3",
+        "medium": "yellow", "low": "cyan",
+    }
+    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    for r in sorted(results, key=lambda x: order.get(x.severity, 9)):
+        color = severity_style.get(r.severity, "white")
+        table.add_row(
+            f"[{color}]{r.severity.upper()}[/{color}]",
+            str(r.status) if r.status else "-",
+            r.url,
+            r.finding,
+        )
+    console.print(table)
+    console.print(f"\n[bold]Total findings:[/bold] {len(results)}")
+
+def emit_json(results: list[Result]) -> None:
+    print(json.dumps({"count": len(results),
+                       "results": [asdict(r) for r in results]}, indent=2))
+
+# ---------- CLI ----------
+
+def cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="vulnscan",
+                                     description="HTTP vulnerability scanner")
+    parser.add_argument("target", help="Base URL, e.g. https://example.com")
+    parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument("--threads", type=int, default=10)
+    parser.add_argument("--user-agent", default="recon-suite/0.1")
+    fmt = parser.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true")
+    fmt.add_argument("--table", action="store_true", default=True)
+    parser.add_argument("-v", "--verbose", action="count", default=0)
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level={0: logging.WARNING, 1: logging.INFO}.get(args.verbose, logging.DEBUG),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+    )
+
+    if not args.target.startswith(("http://", "https://")):
+        parser.error("target must include scheme (http:// or https://)")
+
+    results = scan(args.target.rstrip("/"), args.timeout,
+                    args.threads, args.user_agent)
+
+    if args.json:
+        emit_json(results)
+    else:
+        emit_table(results)
+
+    # Exit non-zero when critical findings exist — CI-friendly.
+    if any(r.severity in ("critical", "high") for r in results):
+        return 2
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(cli())
+12.1 Running It
+python -m recon_suite.scanner https://target.example.com -v
+python -m recon_suite.scanner https://target.example.com --json > findings.json
+python -m recon_suite.scanner https://target.example.com --threads 30 --timeout 8
+
+    Pentester Insight: Every 200 response from .git/config or .env is a critical finding. On real engagements, follow up on .git/ exposure with git-dumper to recover full source, and on .env exposure with careful triage of the leaked credentials. Exit code 2 for critical findings lets you chain this into CI: vulnscan https://staging.example.com || open_ticket.
+
+13. Packaging and Distribution
+13.1 Local Editable Install
+cd recon-suite/
+pip install -e ".[dev]"
+
+Changes to source files take effect on the next invocation with no reinstall.
+13.2 Building a Wheel
+pip install build
+python -m build
+# dist/recon_suite-0.1.0-py3-none-any.whl
+# dist/recon_suite-0.1.0.tar.gz
+13.3 Publishing Internally
+# Private PyPI (e.g. self-hosted with pypiserver or Nexus):
+pip install twine
+twine upload --repository-url https://pypi.internal/simple/ dist/*
+
+# GitHub-based install for teammates:
+pip install "git+https://github.com/your-org/recon-suite.git@v0.1.0"
+13.4 Versioning
+
+Adopt semantic versioning: MAJOR.MINOR.PATCH.
+
+    Bump PATCH for bug fixes.
+    Bump MINOR for new features that are backward compatible.
+    Bump MAJOR for breaking changes (renamed flag, removed subcommand, changed JSON schema).
+
+Tag the git commit that produced each release: git tag -a v0.1.0 -m "First release".
+14. Testing Your Tools
+
+Pentest tools must be tested precisely because they will be trusted to make real security decisions.
+14.1 A Basic pytest Layout
+# tests/test_subdomains.py
+import pytest
+import responses
+
+from recon_suite.subdomains import fetch_crtsh
+
+@responses.activate
+def test_fetch_crtsh_deduplicates() -> None:
+    responses.add(
+        responses.GET,
+        "https://crt.sh/?q=%25.example.com&output=json",
+        json=[
+            {"name_value": "www.example.com\nmail.example.com"},
+            {"name_value": "www.example.com"},
+            {"name_value": "*.example.com"},
+        ],
+        status=200,
+    )
+    result = fetch_crtsh("example.com")
+    assert result == ["example.com", "mail.example.com", "www.example.com"]
+
+@responses.activate
+def test_fetch_crtsh_retries_on_500(monkeypatch) -> None:
+    responses.add(responses.GET,
+                  "https://crt.sh/?q=%25.example.com&output=json",
+                  status=500)
+    responses.add(responses.GET,
+                  "https://crt.sh/?q=%25.example.com&output=json",
+                  status=500)
+    responses.add(responses.GET,
+                  "https://crt.sh/?q=%25.example.com&output=json",
+                  json=[{"name_value": "dev.example.com"}],
+                  status=200)
+    result = fetch_crtsh("example.com")
+    assert "dev.example.com" in result
+14.2 Running the Suite
+pytest -v
+pytest --cov=recon_suite --cov-report=term-missing
+14.3 What to Test
+Layer	What to test
+Parsers	Every flag validation, every custom type edge case
+Network calls	Mocked with responses — never hit real targets in tests
+Output formats	JSON structure stability, CSV header order
+Concurrency	That errors in one worker do not crash the pool
+Retries	That the retry decorator counts attempts correctly
+
+Aim for 80%+ coverage on core logic. Do not test third-party libraries — trust that requests works.
+15. Exercises
+15.1 Guided Exercises
+
+Exercise 1. Extend vulnscan with a check for exposed Kubernetes and Docker files: .docker/config.json, kustomization.yaml, docker-compose.yml, Dockerfile.bak. Add them to EXPOSED_PATHS with severity high, run the scanner against a lab target (http://testphp.vulnweb.com), and confirm the progress bar length increases accordingly.
+
+Exercise 2. Add a --config flag to subenum that reads wordlist_path and resolvers from a TOML file using the pattern from section 5. The TOML file should look like:
+[subenum
+]
+wordlist_path = "/usr/share/wordlists/subdomains-top1million-5000.txt"
+resolvers = ["1.1.1.1", "9.9.9.9"]
+
+Exercise 3. Add a --csv output mode to vulnscan that writes CSV to stdout when passed. Reuse emit_csv from section 7.4. Verify it opens cleanly in column -t -s,.
+15.2 Independent Exercises
+
+Exercise 4. Rewrite vulnscan in typer using the pattern from section 4.2. Keep behavior identical. Compare the resulting --help output to the argparse version.
+
+Exercise 5. Add a new tool portscan to the suite that uses asyncio and asyncio.Semaphore (section 8.3) to check the top 1000 TCP ports on a target. Register it in pyproject.toml under [project.scripts] as portscan = "recon_suite.portscan:cli".
+
+Exercise 6. Build a GitHub Actions workflow (.github/workflows/ci.yml) that runs pytest --cov=recon_suite on every push, fails the build if coverage drops below 80%, and publishes the wheel to a private PyPI on tagged releases.
+16. Summary and Next Lesson
+
+You now have the discipline and the code for turning throwaway scripts into shippable pentest tools. A packaged tool with argparse, structured logging, safe concurrency, retries, JSON output, tests, and a proper pyproject.toml will outlive the engagement it was written for and become part of your permanent kit.
+
+Key takeaways:
+
+    src layout + pyproject.toml turns any script into a pip installable command.
+    argparse covers 95% of CLI needs; reach for typer when the CLI grows.
+    Logs to stderr, data to stdout — this is the rule that keeps your tools pipeable.
+    ThreadPoolExecutor for I/O, ProcessPoolExecutor for CPU, asyncio for rate-controlled fan-out.
+    Retry with backoff on every network call. Networks fail; tools must not.
+    Test with mocked network calls — never hit real targets from CI.
+
+In Lesson 06 — C Programming for Exploit Development, we shift from Python's safety to C's raw memory. You will learn stack layout, function prologues and epilogues, buffer overflows, format-string vulnerabilities, and how the tools you built in this lesson can help you reliably deliver the payloads you will write in the next.
+
+
+
+
+
