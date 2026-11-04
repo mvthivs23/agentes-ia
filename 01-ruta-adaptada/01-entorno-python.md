@@ -1,6 +1,6 @@
 # 01 — Entorno para automatizar
 
-Fuente: `python-for-security/01-python-environment-and-language-fundamentals.md` (secciones 2, 3 y 12, ejercicios 3 y 4) y el scanner de headers de `python-for-security/05-python-tool-development-building-real-pentest-tools.md` (sección 12, `REQUIRED_HEADERS`).
+Fuente: `03-python-for-security/01-python-environment-and-language-fundamentals.md` (secciones 2, 3 y 12, ejercicios 3 y 4) y el scanner de headers de `03-python-for-security/05-python-tool-development-building-real-pentest-tools.md` (sección 12, `REQUIRED_HEADERS`).
 
 El ejercicio 1 de Python es un port scanner y el 2 es un filtro de wordlist. No los uses como automatización de la consultora. Los que sí encajan son el entorno, el enumerador de headers y el merge de reportes JSON.
 

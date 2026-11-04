@@ -1,6 +1,6 @@
 # 05 — Prompt engineering para DevSecOps
 
-Fuente: `red-team-ia/09-ai-powered-code-analysis-and-vulnerability-discovery.md` (el objeto con `evidence_snippet` y `suggested_fix`), `red-team-ia/12-lab-ai-setup-and-prompt-engineering-exercises.md` (la frase `Not covered by the corpus`) y `red-team-ia/05b-local-ai-for-defensive-security.md` (la matriz de modelos y el system prompt del RAG de runbooks).
+Fuente: `04-red-team-ia/09-ai-powered-code-analysis-and-vulnerability-discovery.md` (el objeto con `evidence_snippet` y `suggested_fix`), `04-red-team-ia/12-lab-ai-setup-and-prompt-engineering-exercises.md` (la frase `Not covered by the corpus`) y `04-red-team-ia/05b-local-ai-for-defensive-security.md` (la matriz de modelos y el system prompt del RAG de runbooks).
 
 El prompt de un gate no pide un exploit. Pide un objeto que después se puede comprobar contra el archivo.
 

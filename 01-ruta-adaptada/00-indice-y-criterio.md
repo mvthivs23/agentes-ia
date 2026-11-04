@@ -4,7 +4,20 @@ Cada archivo de esta carpeta es un ejercicio con pasos. Los comandos, los schema
 
 No hay técnicas nuevas. Si un paso no está en el módulo citado, no está aquí.
 
-## Orden
+## Carpetas del repositorio, por prioridad
+
+El 1 es lo que conviene abrir primero.
+
+1. `01-ruta-adaptada` — estos ejercicios.
+2. `02-containers-security` — imagen, Kubernetes, CI/CD, cloud e IaC.
+3. `03-python-for-security` — el entorno para escribir las automatizaciones.
+4. `04-red-team-ia` — prompts, modelo local, RAG y revisión de código.
+5. `05-building-skills-with-claude-and-codex` — skills, triage y la API de NVD.
+6. `06-llm-agent-red-team` — agentes, guardrails y el informe de compliance.
+7. `07-linux-security` — la base del sistema. El `demo.txt` sigue sin partir.
+8. `08-libro-python` — la introducción a agentes y a Python. Ya está cubierta por las carpetas de arriba.
+
+## Orden de esta carpeta
 
 1. `01-entorno-python.md` — el entorno con el que arranca cualquier automatización.
 2. `02-imagen-y-runtime.md` — imagen endurecida, scanners y el gate que falla el build.

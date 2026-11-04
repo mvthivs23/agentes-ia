@@ -1,6 +1,6 @@
 # 08 — Cuatro proyectos para presentar
 
-Cada uno junta ejercicios de esta carpeta. No añade un scanner, un modelo ni un formato que los módulos no tengan. El informe de cierre usa las secciones que el objetivo 33 de `llm-agent-red-team/33-findings-to-compliance.md` ya pide: hallazgo, a qué control mapea, y la remediación. El insumo es tu JSON, no una simulación ofensiva.
+Cada uno junta ejercicios de esta carpeta. No añade un scanner, un modelo ni un formato que los módulos no tengan. El informe de cierre usa las secciones que el objetivo 33 de `06-llm-agent-red-team/33-findings-to-compliance.md` ya pide: hallazgo, a qué control mapea, y la remediación. El insumo es tu JSON, no una simulación ofensiva.
 
 ## A — Gate de imagen e IaC
 
